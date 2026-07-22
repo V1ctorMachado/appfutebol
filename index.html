@@ -2,14 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
 <meta name="theme-color" content="#0f172a" />
 <title>Copa de Futebol</title>
 <style>
-  * { -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; padding: 0; background: #0f172a; }
-  #root { min-height: 100vh; }
-  input, select, textarea, button { box-sizing: border-box; font-family: inherit; }
+  *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #0f172a; width: 100%; overflow-x: hidden; }
+  body { -webkit-text-size-adjust: 100%; }
+  #root { min-height: 100vh; width: 100%; overflow-x: hidden; }
+  input, select, textarea, button { font-family: inherit; max-width: 100%; }
+  /* evita zoom automatico do Safari ao focar campos */
+  input, select, textarea { font-size: 16px; }
+  img { max-width: 100%; }
   .boot { color:#64748b; font:14px system-ui, sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; text-align:center; }
 </style>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -793,20 +797,21 @@ function CopaFutebol() {
                     <div key={j.id} style={S.playerRow}>
                       {editJog === j.id && edit ? (
                         <div style={{ width: "100%" }}>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <input style={{ ...S.input, width: 46, flex: "none", textAlign: "center" }} placeholder="Nº" value={j.numero || ""}
+                          <input style={{ ...S.input, width: "100%", boxSizing: "border-box", marginBottom: 6 }} placeholder="Nome" value={j.nome}
+                            onChange={(e) => updateJog(t.id, j.id, "nome", e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && setEditJog(null)} />
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <input style={{ ...S.input, width: 60, flex: "none", textAlign: "center", minWidth: 0 }} placeholder="Nº"
+                              inputMode="numeric" value={j.numero || ""}
                               onChange={(e) => updateJog(t.id, j.id, "numero", e.target.value)} />
-                            <input style={S.input} placeholder="Nome" value={j.nome}
-                              onChange={(e) => updateJog(t.id, j.id, "nome", e.target.value)}
-                              onKeyDown={(e) => e.key === "Enter" && setEditJog(null)} />
-                            <select style={{ ...S.select, width: 70, flex: "none", padding: "0 4px" }} value={j.posicao}
+                            <select style={{ ...S.select, flex: 1, minWidth: 0, padding: "0 6px" }} value={j.posicao}
                               onChange={(e) => updateJog(t.id, j.id, "posicao", e.target.value)}>
                               {POS.map((p) => <option key={p} value={p}>{p}</option>)}
                             </select>
                           </div>
                           <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                            <button style={{ ...S.primaryBtn, padding: "7px" }} onClick={() => setEditJog(null)}>Pronto</button>
-                            <button style={{ ...S.ghostBtn, color: "#ef4444", borderColor: "#7f1d1d", padding: "7px" }}
+                            <button style={{ ...S.primaryBtn, padding: "9px" }} onClick={() => setEditJog(null)}>Pronto</button>
+                            <button style={{ ...S.ghostBtn, color: "#ef4444", borderColor: "#7f1d1d", padding: "9px" }}
                               onClick={() => { removeJog(t.id, j.id); setEditJog(null); }}>
                               <Trash2 size={14} /> Excluir
                             </button>
@@ -824,13 +829,19 @@ function CopaFutebol() {
                     </div>
                   ))}
                   {edit && (
-                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                    <input style={{ ...S.input, width: 46, flex: "none", textAlign: "center" }} placeholder="Nº" value={jNum} onChange={(e) => setJNum(e.target.value)} />
-                    <input style={S.input} placeholder="Nome" value={jNome} onChange={(e) => setJNome(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addJog(t.id)} />
-                    <select style={{ ...S.select, width: 70, flex: "none", padding: "0 4px" }} value={jPos} onChange={(e) => setJPos(e.target.value)}>
-                      {POS.map((p) => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                    <button style={S.addBtn} onClick={() => addJog(t.id)}><Plus size={18} /></button>
+                  <div style={{ marginTop: 10 }}>
+                    <input style={{ ...S.input, width: "100%", boxSizing: "border-box", marginBottom: 6 }} placeholder="Nome do jogador"
+                      value={jNome} onChange={(e) => setJNome(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addJog(t.id)} />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input style={{ ...S.input, width: 60, flex: "none", textAlign: "center", minWidth: 0 }} placeholder="Nº"
+                        inputMode="numeric" value={jNum} onChange={(e) => setJNum(e.target.value)} />
+                      <select style={{ ...S.select, flex: 1, minWidth: 0, padding: "0 6px" }} value={jPos} onChange={(e) => setJPos(e.target.value)}>
+                        {POS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      <button style={{ ...S.addBtn, flex: "none", padding: "0 16px" }} onClick={() => addJog(t.id)}>
+                        <Plus size={18} />
+                      </button>
+                    </div>
                   </div>
                   )}
                 </div>
@@ -1297,27 +1308,27 @@ function NavBtn({ on, click, icon, label }) {
 
 // ============ ESTILOS ============
 const S = {
-  app: { maxWidth: 420, margin: "0 auto", minHeight: "100vh", background: "#0f172a", color: "#e2e8f0", fontFamily: "system-ui, sans-serif", display: "flex", flexDirection: "column", paddingBottom: 70 },
-  header: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#1e293b", borderBottom: "1px solid #334155", position: "sticky", top: 0, zIndex: 10 },
-  headerTitle: { fontSize: 16, fontWeight: 700 },
-  iconBtn: { background: "none", border: "none", color: "#e2e8f0", cursor: "pointer", padding: 2, display: "flex" },
+  app: { width: "100%", maxWidth: 480, margin: "0 auto", minHeight: "100vh", background: "#0f172a", color: "#e2e8f0", fontFamily: "system-ui, sans-serif", display: "flex", flexDirection: "column", paddingBottom: 74, overflowX: "hidden" },
+  header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "14px 14px", background: "#1e293b", borderBottom: "1px solid #334155", position: "sticky", top: 0, zIndex: 10 },
+  headerTitle: { fontSize: 16, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  iconBtn: { background: "none", border: "none", color: "#e2e8f0", cursor: "pointer", padding: 4, display: "flex", flex: "none" },
   resetConfirm: { background: "#ef4444", border: "none", borderRadius: 6, color: "#fff", padding: "4px 8px", fontSize: 12, fontWeight: 700, cursor: "pointer" },
   textarea: { width: "100%", minHeight: 90, boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0", fontSize: 12, fontFamily: "monospace", resize: "vertical", outline: "none" },
   okBox: { fontSize: 13, color: "#86efac", background: "#0f2a1a", border: "1px solid #166534", borderRadius: 8, padding: "10px 12px", marginBottom: 20, lineHeight: 1.5 },
   warnBox: { fontSize: 13, color: "#fca5a5", background: "#2a1414", border: "1px solid #7f1d1d", borderRadius: 8, padding: "10px 12px", marginBottom: 20, lineHeight: 1.5 },
-  body: { padding: 16, flex: 1 },
+  body: { padding: 14, flex: 1, minWidth: 0 },
   lock: { fontSize: 12, color: "#94a3b8", background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: "8px 12px", marginBottom: 12 },
   inputRow: { display: "flex", gap: 8, marginBottom: 14 },
-  input: { flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 14, outline: "none" },
-  select: { padding: "10px 8px", borderRadius: 8, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 14 },
-  selectSm: { width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0", fontSize: 13, marginBottom: 6 },
+  input: { flex: 1, minWidth: 0, boxSizing: "border-box", padding: "11px 12px", borderRadius: 8, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 16, outline: "none" },
+  select: { boxSizing: "border-box", minWidth: 0, padding: "10px 8px", borderRadius: 8, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontSize: 15, height: 44 },
+  selectSm: { width: "100%", boxSizing: "border-box", padding: "9px 8px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0", fontSize: 15, marginBottom: 6 },
   addBtn: { background: "#3b82f6", border: "none", borderRadius: 8, color: "#fff", padding: "0 12px", cursor: "pointer", display: "flex", alignItems: "center" },
   primaryBtn: { flex: 1, background: "#22c55e", border: "none", borderRadius: 8, color: "#fff", padding: "10px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 },
   ghostBtn: { flex: 1, background: "none", border: "1px solid #334155", borderRadius: 8, color: "#94a3b8", padding: "10px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 },
   optBtn: { background: "#1e293b", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0", padding: "12px", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   card: { background: "#1e293b", borderRadius: 12, border: "1px solid #334155", marginBottom: 12, overflow: "hidden", padding: 0 },
-  cardHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", cursor: "pointer" },
-  cardBody: { padding: "0 14px 12px", borderTop: "1px solid #334155" },
+  cardHead: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", padding: "12px 12px", cursor: "pointer", minWidth: 0 },
+  cardBody: { padding: "0 12px 12px", borderTop: "1px solid #334155" },
   badge: { fontSize: 11, background: "#334155", padding: "2px 8px", borderRadius: 20, color: "#94a3b8" },
   uploadBtn: { display: "inline-flex", alignItems: "center", gap: 5, background: "#1e293b", border: "1px solid #334155", borderRadius: 8, color: "#cbd5e1", padding: "6px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" },
   slotRow: { display: "flex", alignItems: "center", gap: 8, background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: "8px 10px", marginBottom: 6 },
@@ -1339,24 +1350,24 @@ const S = {
   miniDel: { background: "none", border: "none", color: "#ef4444", cursor: "pointer", display: "flex", padding: 4 },
   empty: { textAlign: "center", color: "#64748b", padding: "30px 10px", fontSize: 14, lineHeight: 1.6 },
   groupTitle: { fontSize: 15, fontWeight: 700, color: "#f8fafc", marginBottom: 8, paddingLeft: 2 },
-  matchCard: { display: "flex", alignItems: "center", gap: 8, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: "10px 12px", marginBottom: 8 },
-  matchTeams: { fontWeight: 600, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  matchCard: { display: "flex", alignItems: "center", gap: 8, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: "10px 12px", marginBottom: 8, minWidth: 0 },
+  matchTeams: { fontWeight: 600, fontSize: 13, overflowWrap: "anywhere", lineHeight: 1.35 },
   matchScore: { fontSize: 12, color: "#94a3b8", marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
   miniTag: { fontSize: 10, background: "#166534", color: "#bbf7d0", padding: "1px 6px", borderRadius: 10 },
   section: { padding: "0 16px 20px" },
   sectionTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: "#cbd5e1" },
-  scoreBoard: { display: "flex", alignItems: "center", justifyContent: "space-around", padding: "20px 16px 6px", gap: 8 },
-  scoreTeam: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: 600 },
-  scoreNums: { fontSize: 34, fontWeight: 800, letterSpacing: 2 },
+  scoreBoard: { display: "flex", alignItems: "flex-start", justifyContent: "space-around", padding: "18px 12px 6px", gap: 6 },
+  scoreTeam: { flex: 1, minWidth: 0, textAlign: "center", fontSize: 13, fontWeight: 600, overflowWrap: "anywhere" },
+  scoreNums: { fontSize: 30, fontWeight: 800, letterSpacing: 1, flex: "none", paddingTop: 16 },
   penRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 4 },
   penInput: { width: 46, textAlign: "center", padding: "6px", borderRadius: 6, border: "1px solid #8b5cf6", background: "#1e293b", color: "#e2e8f0", fontSize: 15 },
   finalBadge: { textAlign: "center", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 4 },
-  eventCols: { display: "flex", gap: 10, padding: "12px 16px" },
-  panel: { flex: 1, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: 10 },
+  eventCols: { display: "flex", gap: 8, padding: "12px 12px" },
+  panel: { flex: 1, minWidth: 0, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: 8 },
   panelTitle: { fontSize: 13, fontWeight: 700, textAlign: "center", marginBottom: 8, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  evBtn: { width: "100%", border: "1px solid", borderRadius: 6, background: "none", padding: "8px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginBottom: 6 },
+  evBtn: { width: "100%", boxSizing: "border-box", border: "1px solid", borderRadius: 6, background: "none", padding: "10px 4px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginBottom: 6 },
   evGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 },
-  evSm: (c) => ({ border: "1px solid " + c, color: c, borderRadius: 6, background: "none", padding: "6px 4px", fontSize: 11, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }),
+  evSm: (c) => ({ border: "1px solid " + c, color: c, borderRadius: 6, background: "none", padding: "9px 2px", fontSize: 11, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 3, minWidth: 0, overflow: "hidden" }),
   eventRow: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e293b", borderRadius: 8, padding: "9px 12px", marginTop: 6, fontSize: 14 },
   rankRow: { display: "flex", alignItems: "center", gap: 12, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: "10px 14px", marginBottom: 8 },
   rankPos: { width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, color: "#fff" },
@@ -1366,12 +1377,12 @@ const S = {
   tRow: { display: "flex", alignItems: "center", padding: "9px 8px", borderBottom: "1px solid #263449", fontSize: 13 },
   tHead: { background: "#263449", fontWeight: 700, color: "#94a3b8", fontSize: 11 },
   tPos: { width: 22, textAlign: "center", color: "#64748b" },
-  tName: { flex: 1, fontWeight: 600, paddingLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  tCell: { width: 26, textAlign: "center" },
+  tName: { flex: 1, minWidth: 0, fontWeight: 600, paddingLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  tCell: { width: 24, minWidth: 24, textAlign: "center", flex: "none" },
   champBanner: { display: "flex", alignItems: "center", gap: 8, background: "#f59e0b", color: "#0f172a", borderRadius: 12, padding: "14px 16px", fontSize: 16, fontWeight: 700, marginBottom: 12 },
   thirdBanner: { display: "flex", alignItems: "center", gap: 6, background: "#1e293b", color: "#cd7f32", border: "1px solid #334155", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 600, marginBottom: 16 },
-  nav: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 420, display: "flex", background: "#1e293b", borderTop: "1px solid #334155" },
-  navBtn: { flex: 1, background: "none", border: "none", padding: "10px 0", display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" },
+  nav: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, display: "flex", background: "#1e293b", borderTop: "1px solid #334155", paddingBottom: "env(safe-area-inset-bottom)" },
+  navBtn: { flex: 1, minWidth: 0, background: "none", border: "none", padding: "10px 2px", display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer" },
 };
 
 ReactDOM.createRoot(document.getElementById("root")).render(<CopaFutebol />);
