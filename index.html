@@ -11,7 +11,6 @@
   body { -webkit-text-size-adjust: 100%; }
   #root { min-height: 100vh; width: 100%; overflow-x: hidden; }
   input, select, textarea, button { font-family: inherit; max-width: 100%; }
-  /* evita zoom automatico do Safari ao focar campos */
   input, select, textarea { font-size: 16px; }
   img { max-width: 100%; }
   .boot { color:#64748b; font:14px system-ui, sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; text-align:center; }
@@ -147,18 +146,31 @@ function buildSetup() {
 }
 const SETUP = buildSetup();
 
-// Lê um arquivo de imagem e devolve um data URL redimensionado (máx. `max` px de lado).
+// Lê um arquivo de imagem e devolve um data URL reduzido e comprimido.
+// Mantemos os escudos pequenos porque eles viajam dentro do documento da nuvem,
+// que tem limite de 1 MB no total.
 function fileParaDataURL(file, max, cb) {
   const reader = new FileReader();
   reader.onload = () => {
     const img = new Image();
     img.onload = () => {
       const escala = Math.min(1, max / Math.max(img.width, img.height));
-      const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
+      const w = Math.max(1, Math.round(img.width * escala));
+      const h = Math.max(1, Math.round(img.height * escala));
       const cv = document.createElement("canvas");
       cv.width = w; cv.height = h;
-      cv.getContext("2d").drawImage(img, 0, 0, w, h);
-      try { cb(cv.toDataURL("image/png")); } catch (e) { cb(null); }
+      const ctx = cv.getContext("2d");
+      // fundo escuro para preservar aparência de PNGs transparentes ao virar JPEG
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        let out = cv.toDataURL("image/jpeg", 0.7);
+        // se ainda ficar grande, reduz a qualidade progressivamente
+        let q = 0.6;
+        while (out.length > 24000 && q >= 0.3) { out = cv.toDataURL("image/jpeg", q); q -= 0.1; }
+        cb(out);
+      } catch (e) { cb(null); }
     };
     img.onerror = () => cb(null);
     img.src = reader.result;
@@ -218,7 +230,8 @@ function CopaFutebol() {
   });
   const [orgInput, setOrgInput] = useState("");
   const [orgMsg, setOrgMsg] = useState(null);
-  const [nuvem, setNuvem] = useState(cloudOn ? "conectando" : "off"); // off | conectando | ok | erro
+  const [nuvem, setNuvem] = useState(cloudOn ? "conectando" : "off"); // off | conectando | ok | erro | grande
+  const [nuvemMsg, setNuvemMsg] = useState(null);
   const lastSynced = useRef(null);
   const edit = isOrg;
 
@@ -273,11 +286,31 @@ function CopaFutebol() {
     const cur = JSON.stringify({ times, grupos, matches, bracket });
     if (cur === lastSynced.current) return;
     const t = setTimeout(async () => {
+      // O Firestore recusa documentos acima de 1 MB. Avisamos antes de tentar.
+      const kb = Math.round(cur.length / 1024);
+      if (cur.length > 900 * 1024) {
+        setNuvem("grande");
+        setNuvemMsg("Os dados estão em " + kb + " KB e o limite da nuvem é 1000 KB. Remova alguns escudos (aba Times) para voltar a salvar.");
+        return;
+      }
       try {
         lastSynced.current = cur;
         await fb.collection("torneio").doc("estado").set({ times, grupos, matches, bracket, _at: Date.now() });
-        setNuvem("ok");
-      } catch (e) { setNuvem("erro"); }
+        setNuvem("ok"); setNuvemMsg(null);
+      } catch (e) {
+        lastSynced.current = null; // permite nova tentativa
+        const msg = String((e && (e.message || e.code)) || "");
+        if (/exceeds the maximum allowed size|too large|INVALID_ARGUMENT/i.test(msg)) {
+          setNuvem("grande");
+          setNuvemMsg("A nuvem recusou por tamanho (" + kb + " KB). Remova alguns escudos na aba Times.");
+        } else if (/permission|PERMISSION_DENIED|insufficient/i.test(msg)) {
+          setNuvem("erro");
+          setNuvemMsg("A nuvem recusou a gravação por permissão. Verifique as regras do Firestore.");
+        } else {
+          setNuvem("erro");
+          setNuvemMsg(msg ? "Falha ao salvar: " + msg : null);
+        }
+      }
     }, 700);
     return () => clearTimeout(t);
   }, [times, grupos, matches, bracket, isOrg, carregado]);
@@ -741,9 +774,9 @@ function CopaFutebol() {
         <span style={S.headerTitle}>Copa de Futebol</span>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {cloudOn
-            ? <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: nuvem === "ok" ? "#22c55e" : nuvem === "erro" ? "#ef4444" : "#eab308" }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: nuvem === "ok" ? "#22c55e" : nuvem === "erro" ? "#ef4444" : "#eab308", display: "inline-block" }} />
-                {isOrg ? "Organizador" : "Ao vivo"}
+            ? <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: nuvem === "ok" ? "#22c55e" : nuvem === "conectando" ? "#eab308" : "#ef4444" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: nuvem === "ok" ? "#22c55e" : nuvem === "conectando" ? "#eab308" : "#ef4444", display: "inline-block", flex: "none" }} />
+                {nuvem === "grande" ? "Dados cheios" : isOrg ? "Organizador" : "Ao vivo"}
               </span>
             : <StatusPill status={status} />}
           <button style={S.iconBtn} title="Dados e organizador"
@@ -788,7 +821,7 @@ function CopaFutebol() {
                     <label style={S.uploadBtn}>
                       <ImagePlus size={15} /> {t.escudo ? "Trocar" : "Adicionar"}
                       <input type="file" accept="image/*" style={{ display: "none" }}
-                        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) fileParaDataURL(f, 128, (url) => url && setEscudo(t.id, url)); e.target.value = ""; }} />
+                        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) fileParaDataURL(f, 72, (url) => url && setEscudo(t.id, url)); e.target.value = ""; }} />
                     </label>
                     {t.escudo && <button style={S.miniDel} onClick={() => setEscudo(t.id, null)}><X size={16} /></button>}
                   </div>
@@ -1155,14 +1188,27 @@ function CopaFutebol() {
             <div style={{ height: 1, background: "#334155", margin: "20px 0" }} />
           </>)}
 
-          <div style={cloudOn ? (nuvem === "erro" ? S.warnBox : S.okBox) : (hasDB ? S.okBox : S.warnBox)}>
+          <div style={cloudOn ? ((nuvem === "erro" || nuvem === "grande") ? S.warnBox : S.okBox) : (hasDB ? S.okBox : S.warnBox)}>
             {cloudOn
-              ? (nuvem === "erro"
-                  ? "Sem conexão com a nuvem no momento. Você ainda vê os últimos dados; a sincronização volta sozinha quando a internet retornar."
+              ? (nuvem === "grande"
+                  ? (nuvemMsg || "Os dados passaram do limite da nuvem. Remova alguns escudos na aba Times.")
+                  : nuvem === "erro"
+                  ? (nuvemMsg || "Não foi possível salvar na nuvem agora. Você continua vendo os últimos dados; o app tenta de novo sozinho.")
                   : "Conectado à nuvem. As alterações do organizador aparecem em todos os aparelhos automaticamente.")
               : (hasDB
                   ? "Salvamento automático ativo neste aparelho."
-                  : "Neste ambiente o salvamento automático não está disponível. Use o código de backup abaixo.")}
+                  : "Neste ambiente o salvamento automático não está disponível.")}
+            {cloudOn && edit && (
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>
+                Tamanho atual dos dados: {(JSON.stringify({ times, grupos, matches, bracket }).length / 1024).toFixed(0)} KB de 1000 KB
+              </div>
+            )}
+            {cloudOn && edit && nuvem === "grande" && (
+              <button style={{ ...S.ghostBtn, marginTop: 10, color: "#f59e0b", borderColor: "#78350f" }}
+                onClick={() => setTimes(times.map((t) => ({ ...t, escudo: null })))}>
+                <Trash2 size={15} /> Remover todos os escudos
+              </button>
+            )}
           </div>
 
           {edit && (<>
