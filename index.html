@@ -89,7 +89,7 @@ const Trophy=(p)=>Ic("trophy",p), Users=(p)=>Ic("users",p), Plus=(p)=>Ic("plus",
 /* ================= APP ================= */
 
 const SIZE_LABEL = { 8: "Oitavas de final", 4: "Quartas de final", 2: "Semifinal", 1: "Final" };
-const POS = ["GOL", "ZAG", "LAT", "VOL", "MEI", "ATA"];
+const POS = ["LINHA", "GOLEIRO"];
 const STORAGE_KEY = "copa:estado:v1";
 const hasDB = (() => { try { const k="__copa_test__"; window.localStorage.setItem(k,"1"); window.localStorage.removeItem(k); return true; } catch (e) { return false; } })();
 async function dbGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
@@ -132,7 +132,7 @@ function buildSetup() {
   spec.forEach((g) => {
     const ids = [];
     g.teams.forEach(([tid, nome, jog]) => {
-      times.push({ id: tid, nome, jogadores: [{ id: 100 + tid, numero: "", nome: jog, posicao: "ATA" }] });
+      times.push({ id: tid, nome, jogadores: [{ id: 100 + tid, numero: "", nome: jog, posicao: "LINHA" }] });
       ids.push(tid);
     });
     grupos.push({ id: g.gid, nome: g.gnome, timeIds: ids });
@@ -205,6 +205,18 @@ async function hashSenha(s) {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("copa2026:" + s));
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
   } catch (e) { return "x" + (s || "").length; }
+}
+
+// Converte posições antigas (ZAG, LAT, VOL, MEI, ATA, GOL) para o novo par LINHA/GOLEIRO.
+function migrarPosicoes(times) {
+  return (times || []).map((t) => ({
+    ...t,
+    jogadores: (t.jogadores || []).map((j) => {
+      const p = (j.posicao || "").toUpperCase();
+      if (p === "LINHA" || p === "GOLEIRO") return j;
+      return { ...j, posicao: p === "GOL" || p === "GOLEIRO" ? "GOLEIRO" : "LINHA" };
+    }),
+  }));
 }
 
 // Trava de segurança: localiza arrays aninhados antes de enviar ao Firestore.
@@ -302,7 +314,7 @@ function CopaFutebol() {
         setNuvem("ok");
         if (!snap.exists) return;
         const d = snap.data();
-        const str = JSON.stringify({ times: d.times || [], grupos: d.grupos || [], matches: d.matches || [], bracket: bracketDaNuvem(d.bracket) });
+        const str = JSON.stringify({ times: migrarPosicoes(d.times || []), grupos: d.grupos || [], matches: d.matches || [], bracket: bracketDaNuvem(d.bracket) });
         if (str !== lastSynced.current) {
           lastSynced.current = str;
           const o = JSON.parse(str);
@@ -441,7 +453,7 @@ function CopaFutebol() {
   const [expand, setExpand] = useState(null);
   const [jNome, setJNome] = useState("");
   const [jNum, setJNum] = useState("");
-  const [jPos, setJPos] = useState("ATA");
+  const [jPos, setJPos] = useState("LINHA");
   const [editJog, setEditJog] = useState(null); // id do jogador em edição
 
   const nomeDoTime = (id) => times.find((t) => t.id === id)?.nome || "?";
@@ -697,17 +709,17 @@ function CopaFutebol() {
   const estat = useMemo(() => {
     const P = {}, T = {};
     times.forEach((t) => {
-      T[t.id] = { id: t.id, nome: t.nome, j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, defesas: 0, penDef: 0, medalhas: [] };
+      T[t.id] = { id: t.id, nome: t.nome, j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, medalhas: [] };
       t.jogadores.forEach((j) => {
-        P[j.id] = { id: j.id, nome: j.nome, numero: j.numero, timeId: t.id, time: t.nome, gols: 0, assist: 0, defesas: 0, penDef: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
+        P[j.id] = { id: j.id, nome: j.nome, numero: j.numero, posicao: j.posicao, timeId: t.id, time: t.nome, gols: 0, assist: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
       });
     });
     const bumpP = (ev) => {
       const k = ev.jogadorId; if (k == null) return null;
-      if (!P[k]) P[k] = { id: k, nome: ev.jogadorNome, numero: "", timeId: ev.time, time: nomeDoTime(ev.time), gols: 0, assist: 0, defesas: 0, penDef: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
+      if (!P[k]) P[k] = { id: k, nome: ev.jogadorNome, numero: "", posicao: "LINHA", timeId: ev.time, time: nomeDoTime(ev.time), gols: 0, assist: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
       return P[k];
     };
-    const bumpT = (id) => { if (!T[id]) T[id] = { id, nome: nomeDoTime(id), j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, defesas: 0, penDef: 0, medalhas: [] }; return T[id]; };
+    const bumpT = (id) => { if (!T[id]) T[id] = { id, nome: nomeDoTime(id), j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, medalhas: [] }; return T[id]; };
 
     matches.forEach((m) => {
       const { A, B } = teamsOf(m);
@@ -716,8 +728,6 @@ function CopaFutebol() {
       m.eventos.forEach((ev) => {
         if (ev.tipo === "gol" && !ev.contra) { const p = bumpP(ev); if (p) { p.gols++; golsMatch[ev.jogadorId] = (golsMatch[ev.jogadorId] || 0) + 1; } }
         else if (ev.tipo === "assist") { const p = bumpP(ev); if (p) p.assist++; }
-        else if (ev.tipo === "defesa") { const p = bumpP(ev); if (p) p.defesas++; const t = bumpT(ev.time); if (t) t.defesas++; }
-        else if (ev.tipo === "penaltiDef") { const p = bumpP(ev); if (p) p.penDef++; const t = bumpT(ev.time); if (t) t.penDef++; }
         else if (ev.tipo === "amarelo") { const p = bumpP(ev); if (p) p.amarelos++; }
         else if (ev.tipo === "vermelho") { const p = bumpP(ev); if (p) p.vermelhos++; }
       });
@@ -738,18 +748,23 @@ function CopaFutebol() {
       p.jogos = t ? t.j : 0;
       p.part = p.gols + p.assist;
       p.aprov = p.jogos ? Math.round(p.part / p.jogos * 100) : null;
-      const gcTime = t ? t.gc : 0;
-      const den = p.defesas + gcTime;
-      p.aprovGol = (p.defesas + p.penDef) > 0 ? Math.round((den ? p.defesas / den : 1) * 100) : null;
+      // Goleiro: média de gols sofridos pelo time por jogo (menor é melhor).
+      // Gols de disputa de pênaltis não entram, pois ficam no campo penA/penB.
+      p.ehGoleiro = (p.posicao || "").toUpperCase() === "GOLEIRO";
+      p.golsSofridos = p.ehGoleiro && t ? t.gc : 0;
+      p.media = p.ehGoleiro && p.jogos ? p.golsSofridos / p.jogos : null;
     });
 
     const maxG = Math.max(0, ...jogadores.map((p) => p.gols));
     const maxA = Math.max(0, ...jogadores.map((p) => p.assist));
+    const gks = jogadores.filter((p) => p.ehGoleiro && p.jogos > 0);
+    const minMedia = gks.length ? Math.min(...gks.map((p) => p.media)) : null;
     jogadores.forEach((p) => {
       if (p.hat > 0) p.medalhas.push({ e: "🎩", t: "Hat-trick" });
       if (p.poker > 0) p.medalhas.push({ e: "🃏", t: "Pôquer" });
       if (maxG > 0 && p.gols === maxG) p.medalhas.push({ e: "🥇", t: "Artilheiro" });
       if (maxA > 0 && p.assist === maxA) p.medalhas.push({ e: "🤝", t: "Garçom" });
+      if (minMedia !== null && p.ehGoleiro && p.jogos > 0 && p.media === minMedia) p.medalhas.push({ e: "🧤", t: "Goleiro menos vazado" });
     });
 
     const comJogos = timesArr.filter((t) => t.j >= 2);
@@ -757,7 +772,7 @@ function CopaFutebol() {
     timesArr.forEach((t) => {
       if (bracket && resolve.champion === t.id) t.medalhas.push({ e: "🏆", t: "Campeão" });
       if (t.j >= 2 && t.d === 0) t.medalhas.push({ e: "🛡️", t: "Invicto" });
-      if (minGc !== null && t.j >= 2 && t.gc === minGc) t.medalhas.push({ e: "🧤", t: "Defesa menos vazada" });
+      if (minGc !== null && t.j >= 2 && t.gc === minGc) t.medalhas.push({ e: "🔒", t: "Defesa menos vazada" });
     });
 
     const porTime = timesArr.slice()
@@ -768,7 +783,7 @@ function CopaFutebol() {
       porTime,
       artilheiros: jogadores.filter((p) => p.gols > 0).sort((a, b) => b.gols - a.gols),
       garcons: jogadores.filter((p) => p.assist > 0).sort((a, b) => b.assist - a.assist),
-      goleiros: jogadores.filter((p) => (p.defesas + p.penDef) > 0).sort((a, b) => (b.defesas + b.penDef) - (a.defesas + a.penDef)),
+      goleiros: jogadores.filter((p) => p.ehGoleiro && p.jogos > 0).sort((a, b) => a.media - b.media || b.jogos - a.jogos),
       medalhasJog: jogadores.filter((p) => p.medalhas.length > 0),
       medalhasTime: timesArr.filter((t) => t.medalhas.length > 0),
       tabelaTimes: timesArr.slice().sort((a, b) => b.pts - a.pts || (b.gp - b.gc) - (a.gp - a.gc) || b.gp - a.gp),
@@ -1138,26 +1153,33 @@ function CopaFutebol() {
                       <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.gp}</b><span style={S.chipLb}>gols pró</span></div>
                       <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.gc}</b><span style={S.chipLb}>sofridos</span></div>
                       <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.cs}</b><span style={S.chipLb}>sem sofrer</span></div>
-                      <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.defesas}</b><span style={S.chipLb}>defesas</span></div>
                     </div>
                     {t.jogadores.length === 0 && <div style={S.empty}>Nenhum jogador cadastrado neste time.</div>}
                     {t.jogadores.map((p) => {
-                      const gk = (p.defesas + p.penDef) > 0;
-                      const pct = gk ? p.aprovGol : p.aprov;
+                      const gk = p.ehGoleiro;
                       return (
                         <div key={p.id} style={S.playerStat}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <b style={{ color: "#3b82f6", width: 24, flex: "none" }}>{p.numero || "–"}</b>
-                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nome}</span>
-                            <span style={{ ...S.pctSmall, color: pct == null ? "#475569" : pct >= 60 ? "#22c55e" : pct >= 30 ? "#eab308" : "#94a3b8" }}>
-                              {pct == null ? "–" : pct + "%"}
+                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {p.nome}{gk && <span style={S.posTag}>GOL</span>}
                             </span>
+                            {gk ? (
+                              <span style={{ ...S.pctSmall, color: p.media == null ? "#475569" : p.media <= 1 ? "#22c55e" : p.media <= 2 ? "#eab308" : "#ef4444" }}>
+                                {p.media == null ? "–" : p.media.toFixed(2)}
+                              </span>
+                            ) : (
+                              <span style={{ ...S.pctSmall, color: p.aprov == null ? "#475569" : p.aprov >= 60 ? "#22c55e" : p.aprov >= 30 ? "#eab308" : "#94a3b8" }}>
+                                {p.aprov == null ? "–" : p.aprov + "%"}
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
                             <span>⚽ {p.gols}</span><span>🤝 {p.assist}</span>
-                            {gk && <><span>🧤 {p.defesas}</span><span>🥅 {p.penDef} pên.</span></>}
                             {(p.amarelos > 0 || p.vermelhos > 0) && <span>🟨 {p.amarelos} 🟥 {p.vermelhos}</span>}
-                            <span style={{ color: "#64748b" }}>{gk ? "defesas/finalizações" : p.part + " part. em " + p.jogos + " jogos"}</span>
+                            <span style={{ color: "#64748b" }}>
+                              {gk ? p.golsSofridos + " sofridos em " + p.jogos + " jogos" : p.part + " part. em " + p.jogos + " jogos"}
+                            </span>
                           </div>
                           {p.medalhas.length > 0 && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
@@ -1195,15 +1217,16 @@ function CopaFutebol() {
             </>)}
 
             {estat.goleiros.length > 0 && (<>
-              <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Hand size={17} color="#34d399" /> Goleiros</div>
-              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>% = defesas ÷ finalizações no gol (defesas + gols sofridos)</div>
-              {estat.goleiros.map((a) => (
+              <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Hand size={17} color="#34d399" /> Goleiro menos vazado</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>Média = gols sofridos ÷ jogos. Menor é melhor. Pênaltis de desempate não contam.</div>
+              {estat.goleiros.map((a, i) => (
                 <div key={a.id} style={S.rankRow}>
+                  <span style={{ ...S.rankPos, background: i === 0 ? "#34d399" : i === 1 ? "#94a3b8" : i === 2 ? "#b45309" : "#334155" }}>{i + 1}</span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <b>{a.nome}</b>
-                    <div style={{ fontSize: 12, color: "#64748b" }}>{a.time} · 🧤 {a.defesas} · 🥅 {a.penDef} pên.</div>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{a.time} · {a.golsSofridos} sofridos em {a.jogos} {a.jogos === 1 ? "jogo" : "jogos"}</div>
                   </span>
-                  <span style={{ ...S.golCount, color: "#34d399" }}>{a.aprovGol == null ? "–" : a.aprovGol + "%"}</span>
+                  <span style={{ ...S.golCount, color: "#34d399" }}>{a.media == null ? "–" : a.media.toFixed(2)}</span>
                 </div>
               ))}
             </>)}
@@ -1371,7 +1394,7 @@ function PainelTime({ time, adv, mid, add }) {
   if (!time) return null;
   const reg = (tipo) => {
     const j = time.jogadores.find((x) => x.id === +jog);
-    if ((tipo === "gol" || tipo === "assist" || tipo === "defesa" || tipo === "penaltiDef") && !j) return;
+    if ((tipo === "gol" || tipo === "assist") && !j) return;
     add(mid, { tipo, time: time.id, jogadorId: j?.id ?? null, jogadorNome: j ? j.nome : "(sem nº)" });
     setJog("");
   };
@@ -1393,8 +1416,6 @@ function PainelTime({ time, adv, mid, add }) {
       <button style={{ ...S.evBtn, borderColor: "#22c55e", color: "#22c55e" }} onClick={() => reg("gol")}><Goal size={15} /> Gol</button>
       <div style={S.evGrid}>
         <button style={S.evSm("#38bdf8")} onClick={() => reg("assist")}><Handshake size={12} /> Assist.</button>
-        <button style={S.evSm("#34d399")} onClick={() => reg("defesa")}><Hand size={12} /> Defesa</button>
-        <button style={S.evSm("#22d3ee")} onClick={() => reg("penaltiDef")}><Hand size={12} /> Pên. def.</button>
         <button style={S.evSm("#eab308")} onClick={() => reg("amarelo")}><Square size={12} fill="#eab308" /> Amar.</button>
         <button style={S.evSm("#ef4444")} onClick={() => reg("vermelho")}><Square size={12} fill="#ef4444" /> Verm.</button>
         <button style={S.evSm("#a78bfa")} onClick={() => reg("sub")}><ArrowLeftRight size={12} /> Subst.</button>
@@ -1407,8 +1428,6 @@ function PainelTime({ time, adv, mid, add }) {
 function EvIcon({ e }) {
   if (e.tipo === "gol") return <Goal size={16} color={e.contra ? "#ef4444" : "#22c55e"} />;
   if (e.tipo === "assist") return <Handshake size={15} color="#38bdf8" />;
-  if (e.tipo === "defesa") return <Hand size={15} color="#34d399" />;
-  if (e.tipo === "penaltiDef") return <Hand size={15} color="#22d3ee" />;
   if (e.tipo === "amarelo") return <Square size={14} fill="#eab308" color="#eab308" />;
   if (e.tipo === "vermelho") return <Square size={14} fill="#ef4444" color="#ef4444" />;
   if (e.tipo === "sub") return <ArrowLeftRight size={15} color="#a78bfa" />;
