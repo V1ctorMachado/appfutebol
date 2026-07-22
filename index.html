@@ -171,6 +171,8 @@ function CopaFutebol() {
   const [matches, setMatches] = useState(SETUP.matches); // group + ko matches
   const [bracket, setBracket] = useState(null); // {rounds:[[ids]], finalId, thirdId}
   const [ativa, setAtiva] = useState(null); // matchId em foco
+  const [statsView, setStatsView] = useState("times"); // times | rank
+  const [statTime, setStatTime] = useState(null);
 
   // ------- persistência (banco de dados do app) -------
   const [carregado, setCarregado] = useState(false);
@@ -414,10 +416,17 @@ function CopaFutebol() {
   };
   const refazer = () => { setGrupos([]); setMatches([]); setBracket(null); setAtiva(null); };
   const [confirmRestart, setConfirmRestart] = useState(false);
+  const [confirmZerarTudo, setConfirmZerarTudo] = useState(false);
+  // Zera SOMENTE os placares: preserva times, jogadores, nomes editados e escudos.
+  const zerarResultados = () => {
+    setMatches((prev) => prev.filter((m) => !m.ko).map((m) => ({ ...m, eventos: [], finalizada: false, penA: null, penB: null })));
+    setBracket(null); setAtiva(null); setConfirmRestart(false);
+  };
+  // Recomeça do zero: recria times/grupos/jogos a partir do setup fixo (apaga cadastro).
   const montarGrupos = () => {
     const s = buildSetup();
     setTimes(s.times); setGrupos(s.grupos); setMatches(s.matches);
-    setBracket(null); setAtiva(null); setConfirmRestart(false);
+    setBracket(null); setAtiva(null); setConfirmRestart(false); setConfirmZerarTudo(false);
   };
 
   // ------- eventos de partida -------
@@ -576,17 +585,17 @@ function CopaFutebol() {
   const estat = useMemo(() => {
     const P = {}, T = {};
     times.forEach((t) => {
-      T[t.id] = { id: t.id, nome: t.nome, j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, defesas: 0, medalhas: [] };
+      T[t.id] = { id: t.id, nome: t.nome, j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, defesas: 0, penDef: 0, medalhas: [] };
       t.jogadores.forEach((j) => {
-        P[j.id] = { id: j.id, nome: j.nome, numero: j.numero, time: t.nome, gols: 0, assist: 0, defesas: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
+        P[j.id] = { id: j.id, nome: j.nome, numero: j.numero, timeId: t.id, time: t.nome, gols: 0, assist: 0, defesas: 0, penDef: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
       });
     });
     const bumpP = (ev) => {
       const k = ev.jogadorId; if (k == null) return null;
-      if (!P[k]) P[k] = { id: k, nome: ev.jogadorNome, numero: "", time: nomeDoTime(ev.time), gols: 0, assist: 0, defesas: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
+      if (!P[k]) P[k] = { id: k, nome: ev.jogadorNome, numero: "", timeId: ev.time, time: nomeDoTime(ev.time), gols: 0, assist: 0, defesas: 0, penDef: 0, amarelos: 0, vermelhos: 0, hat: 0, poker: 0, medalhas: [] };
       return P[k];
     };
-    const bumpT = (id) => { if (!T[id]) T[id] = { id, nome: nomeDoTime(id), j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, defesas: 0, medalhas: [] }; return T[id]; };
+    const bumpT = (id) => { if (!T[id]) T[id] = { id, nome: nomeDoTime(id), j: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, cs: 0, defesas: 0, penDef: 0, medalhas: [] }; return T[id]; };
 
     matches.forEach((m) => {
       const { A, B } = teamsOf(m);
@@ -596,6 +605,7 @@ function CopaFutebol() {
         if (ev.tipo === "gol" && !ev.contra) { const p = bumpP(ev); if (p) { p.gols++; golsMatch[ev.jogadorId] = (golsMatch[ev.jogadorId] || 0) + 1; } }
         else if (ev.tipo === "assist") { const p = bumpP(ev); if (p) p.assist++; }
         else if (ev.tipo === "defesa") { const p = bumpP(ev); if (p) p.defesas++; const t = bumpT(ev.time); if (t) t.defesas++; }
+        else if (ev.tipo === "penaltiDef") { const p = bumpP(ev); if (p) p.penDef++; const t = bumpT(ev.time); if (t) t.penDef++; }
         else if (ev.tipo === "amarelo") { const p = bumpP(ev); if (p) p.amarelos++; }
         else if (ev.tipo === "vermelho") { const p = bumpP(ev); if (p) p.vermelhos++; }
       });
@@ -610,6 +620,16 @@ function CopaFutebol() {
 
     const jogadores = Object.values(P), timesArr = Object.values(T);
     timesArr.forEach((t) => { t.pts = t.v * 3 + t.e; t.aprov = t.j ? Math.round(t.pts / (t.j * 3) * 100) : 0; });
+
+    jogadores.forEach((p) => {
+      const t = T[p.timeId];
+      p.jogos = t ? t.j : 0;
+      p.part = p.gols + p.assist;
+      p.aprov = p.jogos ? Math.round(p.part / p.jogos * 100) : null;
+      const gcTime = t ? t.gc : 0;
+      const den = p.defesas + gcTime;
+      p.aprovGol = (p.defesas + p.penDef) > 0 ? Math.round((den ? p.defesas / den : 1) * 100) : null;
+    });
 
     const maxG = Math.max(0, ...jogadores.map((p) => p.gols));
     const maxA = Math.max(0, ...jogadores.map((p) => p.assist));
@@ -628,11 +648,15 @@ function CopaFutebol() {
       if (minGc !== null && t.j >= 2 && t.gc === minGc) t.medalhas.push({ e: "🧤", t: "Defesa menos vazada" });
     });
 
+    const porTime = timesArr.slice()
+      .sort((a, b) => b.pts - a.pts || (b.gp - b.gc) - (a.gp - a.gc) || b.gp - a.gp)
+      .map((t) => ({ ...t, jogadores: jogadores.filter((p) => p.timeId === t.id).sort((a, b) => b.part - a.part || b.gols - a.gols || (a.nome || "").localeCompare(b.nome || "")) }));
+
     return {
-      rendimento: jogadores.slice().sort((a, b) => b.gols - a.gols || b.assist - a.assist || (a.nome || "").localeCompare(b.nome || "")),
+      porTime,
       artilheiros: jogadores.filter((p) => p.gols > 0).sort((a, b) => b.gols - a.gols),
       garcons: jogadores.filter((p) => p.assist > 0).sort((a, b) => b.assist - a.assist),
-      goleiros: jogadores.filter((p) => p.defesas > 0).sort((a, b) => b.defesas - a.defesas),
+      goleiros: jogadores.filter((p) => (p.defesas + p.penDef) > 0).sort((a, b) => (b.defesas + b.penDef) - (a.defesas + a.penDef)),
       medalhasJog: jogadores.filter((p) => p.medalhas.length > 0),
       medalhasTime: timesArr.filter((t) => t.medalhas.length > 0),
       tabelaTimes: timesArr.slice().sort((a, b) => b.pts - a.pts || (b.gp - b.gc) - (a.gp - a.gc) || b.gp - a.gp),
@@ -827,20 +851,23 @@ function CopaFutebol() {
           ) : (
             <>
               {edit && (
-              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-                {confirmRestart ? (
-                  <>
-                    <button style={{ ...S.resetConfirm, padding: "10px 12px", fontSize: 13 }} onClick={montarGrupos}>Zerar resultados</button>
-                    <button style={S.ghostBtn} onClick={() => setConfirmRestart(false)}>Cancelar</button>
-                  </>
-                ) : (
-                  <button style={S.ghostBtn} onClick={() => setConfirmRestart(true)}><RefreshCw size={15} /> Reiniciar</button>
-                )}
-                {[2, 4, 8].includes(grupos.length) && (
-                  <button style={{ ...S.primaryBtn, opacity: todosGruposFim ? 1 : 0.4 }} disabled={!todosGruposFim} onClick={gerarMata}>
-                    <GitMerge size={16} /> {bracket ? "Refazer chave" : "Gerar mata-mata"}
-                  </button>
-                )}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {confirmRestart ? (
+                    <>
+                      <button style={{ ...S.resetConfirm, padding: "10px 12px", fontSize: 13 }} onClick={zerarResultados}>Zerar placares</button>
+                      <button style={S.ghostBtn} onClick={() => setConfirmRestart(false)}>Cancelar</button>
+                    </>
+                  ) : (
+                    <button style={S.ghostBtn} onClick={() => setConfirmRestart(true)}><RefreshCw size={15} /> Zerar placares</button>
+                  )}
+                  {[2, 4, 8].includes(grupos.length) && (
+                    <button style={{ ...S.primaryBtn, opacity: todosGruposFim ? 1 : 0.4 }} disabled={!todosGruposFim} onClick={gerarMata}>
+                      <GitMerge size={16} /> {bracket ? "Refazer chave" : "Gerar mata-mata"}
+                    </button>
+                  )}
+                </div>
+                {confirmRestart && <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>Apaga só gols, cartões e resultados. Times, jogadores e escudos são preservados.</div>}
               </div>
               )}
               {edit && !todosGruposFim && [2, 4, 8].includes(grupos.length) &&
@@ -924,67 +951,121 @@ function CopaFutebol() {
       {/* -------- ARTILHARIA -------- */}
       {tela === "stats" && (
         <div style={S.body}>
-          <div style={{ ...S.sectionTitle, marginBottom: 4 }}><Goal size={18} color="#f59e0b" /> Artilheiros</div>
-          {estat.artilheiros.length === 0 && <div style={S.empty}>Marque gols para ver os artilheiros.</div>}
-          {estat.artilheiros.map((a, i) => (
-            <div key={a.id} style={S.rankRow}>
-              <span style={{ ...S.rankPos, background: i === 0 ? "#f59e0b" : i === 1 ? "#94a3b8" : i === 2 ? "#b45309" : "#334155" }}>{i + 1}</span>
-              <span style={{ flex: 1, minWidth: 0 }}><b>{a.nome}</b><div style={{ fontSize: 12, color: "#64748b" }}>{a.time}</div></span>
-              <span style={S.golCount}><Goal size={15} /> {a.gols}</span>
-            </div>
-          ))}
-
-          {estat.garcons.length > 0 && (<>
-            <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Handshake size={17} color="#38bdf8" /> Garçons (assistências)</div>
-            {estat.garcons.map((a) => (
-              <div key={a.id} style={S.rankRow}>
-                <span style={{ flex: 1, minWidth: 0 }}><b>{a.nome}</b><div style={{ fontSize: 12, color: "#64748b" }}>{a.time}</div></span>
-                <span style={{ ...S.golCount, color: "#38bdf8" }}><Handshake size={15} /> {a.assist}</span>
-              </div>
-            ))}
-          </>)}
-
-          {estat.goleiros.length > 0 && (<>
-            <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Hand size={17} color="#34d399" /> Defesas (goleiros)</div>
-            {estat.goleiros.map((a) => (
-              <div key={a.id} style={S.rankRow}>
-                <span style={{ flex: 1, minWidth: 0 }}><b>{a.nome}</b><div style={{ fontSize: 12, color: "#64748b" }}>{a.time}</div></span>
-                <span style={{ ...S.golCount, color: "#34d399" }}><Hand size={15} /> {a.defesas}</span>
-              </div>
-            ))}
-          </>)}
-
-          <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Users size={17} color="#cbd5e1" /> Rendimento dos jogadores</div>
-          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>⚽ gols · 🤝 assistências · 🧤 defesas · 🟨/🟥 cartões</div>
-          {estat.rendimento.map((p) => (
-            <div key={p.id} style={S.rankRow}>
-              <span style={{ flex: 1, minWidth: 0 }}><b>{p.numero ? p.numero + " · " : ""}{p.nome}</b><div style={{ fontSize: 12, color: "#64748b" }}>{p.time}</div></span>
-              <span style={{ fontSize: 12, color: "#cbd5e1", display: "flex", gap: 8, whiteSpace: "nowrap" }}>
-                <span>⚽{p.gols}</span><span>🤝{p.assist}</span><span>🧤{p.defesas}</span>
-                {(p.amarelos > 0 || p.vermelhos > 0) && <span>🟨{p.amarelos} 🟥{p.vermelhos}</span>}
-              </span>
-            </div>
-          ))}
-
-          <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><ListOrdered size={17} color="#3b82f6" /> Estatísticas dos times</div>
-          <div style={S.table}>
-            <div style={{ ...S.tRow, ...S.tHead }}>
-              <span style={S.tName}>Time</span>
-              <span style={S.tCell}>J</span><span style={S.tCell}>V</span><span style={S.tCell}>E</span>
-              <span style={S.tCell}>D</span><span style={S.tCell}>SG</span><span style={{ ...S.tCell, width: 34 }}>%</span>
-            </div>
-            {estat.tabelaTimes.map((t) => (
-              <div key={t.id} style={S.tRow}>
-                <span style={{ ...S.tName, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                  <Escudo time={timeObj(t.id)} size={16} />
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.nome}</span>
-                </span>
-                <span style={S.tCell}>{t.j}</span><span style={{ ...S.tCell, color: "#3b82f6", fontWeight: 700 }}>{t.v}</span>
-                <span style={S.tCell}>{t.e}</span><span style={S.tCell}>{t.d}</span>
-                <span style={S.tCell}>{t.gp - t.gc}</span><span style={{ ...S.tCell, width: 34 }}>{t.aprov}%</span>
-              </div>
-            ))}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <button style={S.tab(statsView === "times")} onClick={() => setStatsView("times")}>Por time</button>
+            <button style={S.tab(statsView === "rank")} onClick={() => setStatsView("rank")}>Rankings</button>
           </div>
+
+          {statsView === "times" && (<>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Toque num time para ver os jogadores e o que cada um fez.</div>
+            {estat.porTime.map((t) => (
+              <div key={t.id} style={S.card}>
+                <div style={S.cardHead} onClick={() => setStatTime(statTime === t.id ? null : t.id)}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+                    <Escudo time={timeObj(t.id)} size={24} />
+                    <span style={{ minWidth: 0 }}>
+                      <b style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.nome}</b>
+                      <span style={{ fontSize: 11, color: "#64748b" }}>{t.j} jogos · {t.v}V {t.e}E {t.d}D · SG {t.gp - t.gc >= 0 ? "+" : ""}{t.gp - t.gc}</span>
+                    </span>
+                  </span>
+                  <span style={{ ...S.pctBig, color: t.aprov >= 60 ? "#22c55e" : t.aprov >= 34 ? "#eab308" : "#ef4444" }}>{t.j ? t.aprov + "%" : "–"}</span>
+                </div>
+                {statTime === t.id && (
+                  <div style={S.cardBody}>
+                    <div style={{ display: "flex", gap: 6, padding: "10px 0 12px" }}>
+                      <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.gp}</b><span style={S.chipLb}>gols pró</span></div>
+                      <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.gc}</b><span style={S.chipLb}>sofridos</span></div>
+                      <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.cs}</b><span style={S.chipLb}>sem sofrer</span></div>
+                      <div style={S.statChip}><b style={{ fontSize: 15 }}>{t.defesas}</b><span style={S.chipLb}>defesas</span></div>
+                    </div>
+                    {t.jogadores.length === 0 && <div style={S.empty}>Nenhum jogador cadastrado neste time.</div>}
+                    {t.jogadores.map((p) => {
+                      const gk = (p.defesas + p.penDef) > 0;
+                      const pct = gk ? p.aprovGol : p.aprov;
+                      return (
+                        <div key={p.id} style={S.playerStat}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <b style={{ color: "#3b82f6", width: 24, flex: "none" }}>{p.numero || "–"}</b>
+                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nome}</span>
+                            <span style={{ ...S.pctSmall, color: pct == null ? "#475569" : pct >= 60 ? "#22c55e" : pct >= 30 ? "#eab308" : "#94a3b8" }}>
+                              {pct == null ? "–" : pct + "%"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                            <span>⚽ {p.gols}</span><span>🤝 {p.assist}</span>
+                            {gk && <><span>🧤 {p.defesas}</span><span>🥅 {p.penDef} pên.</span></>}
+                            {(p.amarelos > 0 || p.vermelhos > 0) && <span>🟨 {p.amarelos} 🟥 {p.vermelhos}</span>}
+                            <span style={{ color: "#64748b" }}>{gk ? "defesas/finalizações" : p.part + " part. em " + p.jogos + " jogos"}</span>
+                          </div>
+                          {p.medalhas.length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
+                              {p.medalhas.map((m, i) => <span key={i} style={S.medalChip}>{m.e} {m.t}</span>)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </>)}
+
+          {statsView === "rank" && (<>
+            <div style={{ ...S.sectionTitle, marginBottom: 4 }}><Goal size={18} color="#f59e0b" /> Artilheiros</div>
+            {estat.artilheiros.length === 0 && <div style={S.empty}>Marque gols para ver os artilheiros.</div>}
+            {estat.artilheiros.map((a, i) => (
+              <div key={a.id} style={S.rankRow}>
+                <span style={{ ...S.rankPos, background: i === 0 ? "#f59e0b" : i === 1 ? "#94a3b8" : i === 2 ? "#b45309" : "#334155" }}>{i + 1}</span>
+                <span style={{ flex: 1, minWidth: 0 }}><b>{a.nome}</b><div style={{ fontSize: 12, color: "#64748b" }}>{a.time}</div></span>
+                <span style={S.golCount}><Goal size={15} /> {a.gols}</span>
+              </div>
+            ))}
+
+            {estat.garcons.length > 0 && (<>
+              <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Handshake size={17} color="#38bdf8" /> Garçons (assistências)</div>
+              {estat.garcons.map((a) => (
+                <div key={a.id} style={S.rankRow}>
+                  <span style={{ flex: 1, minWidth: 0 }}><b>{a.nome}</b><div style={{ fontSize: 12, color: "#64748b" }}>{a.time}</div></span>
+                  <span style={{ ...S.golCount, color: "#38bdf8" }}><Handshake size={15} /> {a.assist}</span>
+                </div>
+              ))}
+            </>)}
+
+            {estat.goleiros.length > 0 && (<>
+              <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><Hand size={17} color="#34d399" /> Goleiros</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>% = defesas ÷ finalizações no gol (defesas + gols sofridos)</div>
+              {estat.goleiros.map((a) => (
+                <div key={a.id} style={S.rankRow}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <b>{a.nome}</b>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{a.time} · 🧤 {a.defesas} · 🥅 {a.penDef} pên.</div>
+                  </span>
+                  <span style={{ ...S.golCount, color: "#34d399" }}>{a.aprovGol == null ? "–" : a.aprovGol + "%"}</span>
+                </div>
+              ))}
+            </>)}
+
+            <div style={{ ...S.sectionTitle, margin: "22px 0 8px" }}><ListOrdered size={17} color="#3b82f6" /> Estatísticas dos times</div>
+            <div style={S.table}>
+              <div style={{ ...S.tRow, ...S.tHead }}>
+                <span style={S.tName}>Time</span>
+                <span style={S.tCell}>J</span><span style={S.tCell}>V</span><span style={S.tCell}>E</span>
+                <span style={S.tCell}>D</span><span style={S.tCell}>SG</span><span style={{ ...S.tCell, width: 34 }}>%</span>
+              </div>
+              {estat.tabelaTimes.map((t) => (
+                <div key={t.id} style={S.tRow}>
+                  <span style={{ ...S.tName, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <Escudo time={timeObj(t.id)} size={16} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.nome}</span>
+                  </span>
+                  <span style={S.tCell}>{t.j}</span><span style={{ ...S.tCell, color: "#3b82f6", fontWeight: 700 }}>{t.v}</span>
+                  <span style={S.tCell}>{t.e}</span><span style={S.tCell}>{t.d}</span>
+                  <span style={S.tCell}>{t.gp - t.gc}</span><span style={{ ...S.tCell, width: 34 }}>{t.aprov}%</span>
+                </div>
+              ))}
+            </div>
+          </>)}
         </div>
       )}
 
@@ -1055,7 +1136,7 @@ function CopaFutebol() {
                   : "Neste ambiente o salvamento automático não está disponível. Use o código de backup abaixo.")}
           </div>
 
-          {edit && (<>
+          {edit && !cloudOn && (<>
           <div style={S.groupTitle}>Salvar com palavra-chave</div>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Guarde o torneio neste aparelho com um nome fácil e restaure depois só digitando a palavra. Sem código gigante.</div>
           <input style={{ ...S.input, width: "100%", boxSizing: "border-box" }} placeholder="ex.: copa2026" value={slotName} onChange={(e) => setSlotName(e.target.value)} />
@@ -1082,6 +1163,7 @@ function CopaFutebol() {
           <div style={{ height: 1, background: "#334155", margin: "24px 0" }} />
           </>)}
 
+          {!cloudOn && (<>
           <div style={S.groupTitle}>Código de backup (para outro aparelho)</div>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Use isto só para levar o torneio para outro celular ou navegador.</div>
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#cbd5e1", marginBottom: 8, cursor: "pointer" }}>
@@ -1093,8 +1175,9 @@ function CopaFutebol() {
           <button style={{ ...S.primaryBtn, marginBottom: 22 }} onClick={copiarBackup}>
             <Copy size={16} /> {copied ? "Copiado!" : "Copiar código"}
           </button>
+          </>)}
 
-          {edit && (<>
+          {edit && !cloudOn && (<>
           <div style={S.groupTitle}>Restaurar backup</div>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Cole um código de backup para substituir os dados atuais.</div>
           <textarea placeholder="Cole o código do backup aqui…" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} style={S.textarea} />
@@ -1102,9 +1185,26 @@ function CopaFutebol() {
           {restoreMsg && <div style={{ fontSize: 13, marginTop: 8, color: restoreMsg.ok ? "#22c55e" : "#ef4444" }}>{restoreMsg.t}</div>}
 
           <div style={{ height: 1, background: "#334155", margin: "24px 0" }} />
+          </>)}
 
+          {edit && (<>
           <div style={S.groupTitle}>Zona de risco</div>
-          {confirmReset ? (
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 10 }}>
+            {cloudOn
+              ? "Estas ações apagam o cadastro (times, jogadores, escudos) para todos os aparelhos. Para apagar só os placares, use \"Zerar placares\" na aba Grupos."
+              : "Estas ações apagam o cadastro (times, jogadores, escudos). Para apagar só os placares, use \"Zerar placares\" na aba Grupos."}
+          </div>
+          {confirmZerarTudo ? (
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <button style={{ ...S.resetConfirm, flex: 1, padding: "10px" }} onClick={montarGrupos}>Sim, recomeçar</button>
+              <button style={{ ...S.ghostBtn, flex: 1 }} onClick={() => setConfirmZerarTudo(false)}>Cancelar</button>
+            </div>
+          ) : (
+            <button style={{ ...S.ghostBtn, color: "#f59e0b", borderColor: "#78350f", marginBottom: 10 }} onClick={() => setConfirmZerarTudo(true)}>
+              <RefreshCw size={15} /> Recomeçar do zero (restaura os 8 times padrão)
+            </button>
+          )}
+          {!cloudOn && (confirmReset ? (
             <div style={{ display: "flex", gap: 8 }}>
               <button style={{ ...S.resetConfirm, flex: 1, padding: "10px" }} onClick={apagarTudo}>Sim, apagar tudo</button>
               <button style={{ ...S.ghostBtn, flex: 1 }} onClick={() => setConfirmReset(false)}>Cancelar</button>
@@ -1113,7 +1213,7 @@ function CopaFutebol() {
             <button style={{ ...S.ghostBtn, color: "#ef4444", borderColor: "#7f1d1d" }} onClick={() => setConfirmReset(true)}>
               <Trash2 size={15} /> Apagar todos os dados
             </button>
-          )}
+          ))}
           </>)}
         </div>
       )}
@@ -1153,7 +1253,7 @@ function PainelTime({ time, adv, mid, add }) {
   if (!time) return null;
   const reg = (tipo) => {
     const j = time.jogadores.find((x) => x.id === +jog);
-    if ((tipo === "gol" || tipo === "assist" || tipo === "defesa") && !j) return;
+    if ((tipo === "gol" || tipo === "assist" || tipo === "defesa" || tipo === "penaltiDef") && !j) return;
     add(mid, { tipo, time: time.id, jogadorId: j?.id ?? null, jogadorNome: j ? j.nome : "(sem nº)" });
     setJog("");
   };
@@ -1176,6 +1276,7 @@ function PainelTime({ time, adv, mid, add }) {
       <div style={S.evGrid}>
         <button style={S.evSm("#38bdf8")} onClick={() => reg("assist")}><Handshake size={12} /> Assist.</button>
         <button style={S.evSm("#34d399")} onClick={() => reg("defesa")}><Hand size={12} /> Defesa</button>
+        <button style={S.evSm("#22d3ee")} onClick={() => reg("penaltiDef")}><Hand size={12} /> Pên. def.</button>
         <button style={S.evSm("#eab308")} onClick={() => reg("amarelo")}><Square size={12} fill="#eab308" /> Amar.</button>
         <button style={S.evSm("#ef4444")} onClick={() => reg("vermelho")}><Square size={12} fill="#ef4444" /> Verm.</button>
         <button style={S.evSm("#a78bfa")} onClick={() => reg("sub")}><ArrowLeftRight size={12} /> Subst.</button>
@@ -1189,6 +1290,7 @@ function EvIcon({ e }) {
   if (e.tipo === "gol") return <Goal size={16} color={e.contra ? "#ef4444" : "#22c55e"} />;
   if (e.tipo === "assist") return <Handshake size={15} color="#38bdf8" />;
   if (e.tipo === "defesa") return <Hand size={15} color="#34d399" />;
+  if (e.tipo === "penaltiDef") return <Hand size={15} color="#22d3ee" />;
   if (e.tipo === "amarelo") return <Square size={14} fill="#eab308" color="#eab308" />;
   if (e.tipo === "vermelho") return <Square size={14} fill="#ef4444" color="#ef4444" />;
   if (e.tipo === "sub") return <ArrowLeftRight size={15} color="#a78bfa" />;
@@ -1257,6 +1359,11 @@ const S = {
   medalIcon: { width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flex: "none" },
   medalChip: { fontSize: 12, background: "#0f172a", border: "1px solid #334155", borderRadius: 20, padding: "3px 9px", color: "#e2e8f0", whiteSpace: "nowrap" },
   statChip: { display: "flex", flexDirection: "column", alignItems: "center", background: "#0f172a", border: "1px solid #263449", borderRadius: 8, padding: "8px 4px", flex: 1 },
+  chipLb: { fontSize: 10, color: "#64748b", marginTop: 2, textAlign: "center" },
+  tab: (on) => ({ flex: 1, padding: "9px 8px", borderRadius: 8, border: "1px solid " + (on ? "#3b82f6" : "#334155"), background: on ? "#1e3a5f" : "#1e293b", color: on ? "#e2e8f0" : "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer" }),
+  pctBig: { fontSize: 17, fontWeight: 800, flex: "none", marginLeft: 8 },
+  pctSmall: { fontSize: 14, fontWeight: 700, flex: "none" },
+  playerStat: { padding: "10px 0", borderBottom: "1px solid #263449" },
   posTag: { fontSize: 10, background: "#334155", color: "#94a3b8", padding: "1px 6px", borderRadius: 6, marginLeft: 6 },
   playerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #263449", fontSize: 14 },
   miniDel: { background: "none", border: "none", color: "#ef4444", cursor: "pointer", display: "flex", padding: 4 },
