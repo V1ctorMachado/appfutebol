@@ -93,11 +93,12 @@ async function dbGet(key) { try { return window.localStorage.getItem(key); } cat
 async function dbSet(key, val) { window.localStorage.setItem(key, val); }
 async function dbDel(key) { window.localStorage.removeItem(key); }
 
-// Gera os confrontos em rodadas (algoritmo do círculo), evitando que um time
-// jogue várias partidas seguidas — importante quando tudo acontece no mesmo dia.
+// Gera os confrontos organizados em RODADAS (algoritmo do círculo).
+// Uma rodada é um "horário" do campeonato: cada time joga no máximo uma vez nela,
+// e só quando a rodada termina é que a próxima começa.
 function gerarRodadas(ids) {
   const a = ids.slice();
-  if (a.length % 2) a.push(null);
+  if (a.length % 2) a.push(null); // bye: com número ímpar, um time folga por rodada
   const n = a.length, rodadas = [];
   for (let r = 0; r < n - 1; r++) {
     const jogos = [];
@@ -108,18 +109,7 @@ function gerarRodadas(ids) {
     rodadas.push(jogos);
     a.splice(1, 0, a.pop()); // gira mantendo o primeiro fixo
   }
-  // achata intercalando: evita repetir na sequência o time do jogo anterior
-  const seq = [];
-  rodadas.forEach((r) => {
-    const pool = r.slice();
-    while (pool.length) {
-      const ult = seq.length ? seq[seq.length - 1] : [];
-      let k = pool.findIndex((g) => g[0] !== ult[0] && g[0] !== ult[1] && g[1] !== ult[0] && g[1] !== ult[1]);
-      if (k < 0) k = 0;
-      seq.push(pool.splice(k, 1)[0]);
-    }
-  });
-  return seq;
+  return rodadas; // [[ [a,b], [c,d] ], [ ... ], ...]
 }
 
 // Setup fixo do torneio: 2 grupos na ordem definida (sem sorteio).
@@ -143,8 +133,10 @@ function buildSetup() {
       ids.push(tid);
     });
     grupos.push({ id: g.gid, nome: g.gnome, timeIds: ids });
-    gerarRodadas(ids).forEach(([a, b]) => {
-      matches.push({ id: "M" + (mc++), ko: false, grupoId: g.gid, timeA: a, timeB: b, eventos: [], finalizada: false });
+    gerarRodadas(ids).forEach((jogos, ri) => {
+      jogos.forEach(([a, b]) => {
+        matches.push({ id: "M" + (mc++), ko: false, grupoId: g.gid, rodada: ri + 1, timeA: a, timeB: b, eventos: [], finalizada: false });
+      });
     });
   });
   return { times, grupos, matches };
@@ -396,8 +388,10 @@ function CopaFutebol() {
     let mc = 1;
     const novos = [];
     grupos.forEach((g) => {
-      gerarRodadas(g.timeIds).forEach(([a, b]) => {
-        novos.push({ id: "M" + (mc++), ko: false, grupoId: g.id, timeA: a, timeB: b, eventos: [], finalizada: false });
+      gerarRodadas(g.timeIds).forEach((jogos, ri) => {
+        jogos.forEach(([a, b]) => {
+          novos.push({ id: "M" + (mc++), ko: false, grupoId: g.id, rodada: ri + 1, timeA: a, timeB: b, eventos: [], finalizada: false });
+        });
       });
     });
     setMatches(novos);
@@ -912,15 +906,22 @@ function CopaFutebol() {
                   <div style={{ marginTop: 8 }}>
                     {(() => {
                       const jogos = matches.filter((m) => !m.ko && m.grupoId === g.id);
-                      const porRodada = Math.max(1, Math.floor(g.timeIds.length / 2));
-                      return jogos.map((m, i) => (
-                        <div key={m.id}>
-                          {i % porRodada === 0 && (
-                            <div style={S.roundLabel}>Rodada {Math.floor(i / porRodada) + 1}</div>
-                          )}
-                          <MatchLine m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} />
-                        </div>
-                      ));
+                      const nums = [...new Set(jogos.map((m) => m.rodada || 1))].sort((a, b) => a - b);
+                      return nums.map((rn) => {
+                        const doRound = jogos.filter((m) => (m.rodada || 1) === rn);
+                        const fim = doRound.every((m) => m.finalizada);
+                        return (
+                          <div key={rn} style={{ marginBottom: 12 }}>
+                            <div style={S.roundLabel}>
+                              Rodada {rn}
+                              {fim && <span style={S.roundDone}>concluída</span>}
+                            </div>
+                            {doRound.map((m) => (
+                              <MatchLine key={m.id} m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} />
+                            ))}
+                          </div>
+                        );
+                      });
                     })()}
                   </div>
                 </div>
@@ -1333,7 +1334,8 @@ const S = {
   posTag: { fontSize: 10, background: "#334155", color: "#94a3b8", padding: "1px 6px", borderRadius: 6, marginLeft: 6 },
   playerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #263449", fontSize: 14 },
   editBtn: { background: "none", border: "1px solid #334155", borderRadius: 6, color: "#94a3b8", cursor: "pointer", padding: "5px 7px", display: "flex", alignItems: "center", flex: "none" },
-  roundLabel: { fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 0.5, textTransform: "uppercase", margin: "10px 0 6px", paddingLeft: 2 },
+  roundLabel: { fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 0.5, textTransform: "uppercase", margin: "10px 0 6px", paddingLeft: 2, display: "flex", alignItems: "center", gap: 8 },
+  roundDone: { fontSize: 9, background: "#166534", color: "#bbf7d0", padding: "2px 7px", borderRadius: 10, letterSpacing: 0, textTransform: "none", fontWeight: 600 },
   miniDel: { background: "none", border: "none", color: "#ef4444", cursor: "pointer", display: "flex", padding: 4 },
   empty: { textAlign: "center", color: "#64748b", padding: "30px 10px", fontSize: 14, lineHeight: 1.6 },
   groupTitle: { fontSize: 15, fontWeight: 700, color: "#f8fafc", marginBottom: 8, paddingLeft: 2 },
