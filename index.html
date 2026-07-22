@@ -150,12 +150,17 @@ const FIREBASE_CONFIG = {
   appId: "1:276442331441:web:57260eb024e6b4bc395810",
 };
 let fb = null;
+let fbErro = null;
 try {
   if (typeof window !== "undefined" && window.firebase && FIREBASE_CONFIG.apiKey) {
     if (!window.firebase.apps.length) window.firebase.initializeApp(FIREBASE_CONFIG);
     fb = window.firebase.firestore();
+  } else if (typeof window !== "undefined" && !window.firebase) {
+    fbErro = "lib";
   }
-} catch (e) { fb = null; }
+} catch (e) { fb = null; fbErro = "init"; }
+// cloudCfg: o app FOI configurado para nuvem (tem chaves). cloudOn: a lib carregou de fato.
+const cloudCfg = !!FIREBASE_CONFIG.apiKey;
 const cloudOn = !!fb;
 async function hashSenha(s) {
   try {
@@ -250,45 +255,6 @@ function CopaFutebol() {
     return () => clearTimeout(t);
   }, [times, grupos, matches, bracket, isOrg, carregado]);
 
-  // ------- slots por palavra-chave (gavetas nomeadas neste aparelho) -------
-  const [slots, setSlots] = useState([]);
-  const [slotName, setSlotName] = useState("");
-  const [slotMsg, setSlotMsg] = useState(null);
-  const [incluirEscudos, setIncluirEscudos] = useState(true);
-  const safeKey = (nome) => "copa:slot:" + (nome || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  const refreshSlots = async () => {
-    if (!hasDB) return;
-    try { const raw = await dbGet("copa:slotindex"); const idx = raw ? JSON.parse(raw) : []; if (Array.isArray(idx)) setSlots(idx.slice().sort((a, b) => b.t - a.t)); } catch (e) {}
-  };
-  const salvarSlot = async () => {
-    const nome = slotName.trim();
-    if (!nome) { setSlotMsg({ ok: false, t: "Digite uma palavra-chave." }); setTimeout(() => setSlotMsg(null), 3000); return; }
-    const key = safeKey(nome);
-    if (key === "copa:slot:") { setSlotMsg({ ok: false, t: "Palavra-chave inválida." }); setTimeout(() => setSlotMsg(null), 3000); return; }
-    try {
-      await dbSet(key, JSON.stringify({ n: nome, t: Date.now(), d: { times, grupos, matches, bracket } }));
-      const idx = slots.filter((s) => s.key !== key).concat([{ key, n: nome, t: Date.now() }]).sort((a, b) => b.t - a.t);
-      await dbSet("copa:slotindex", JSON.stringify(idx));
-      setSlots(idx); setSlotMsg({ ok: true, t: 'Salvo como "' + nome + '".' });
-    } catch (e) { setSlotMsg({ ok: false, t: "Não foi possível salvar (espaço cheio?)." }); }
-    setTimeout(() => setSlotMsg(null), 3000);
-  };
-  const restaurarSlot = async (nomeOuKey) => {
-    const key = nomeOuKey && nomeOuKey.indexOf("copa:slot:") === 0 ? nomeOuKey : safeKey(nomeOuKey || "");
-    try {
-      const raw = await dbGet(key);
-      if (!raw) { setSlotMsg({ ok: false, t: "Não encontrei essa palavra-chave." }); setTimeout(() => setSlotMsg(null), 3000); return; }
-      const o = JSON.parse(raw); const d = o.d || o;
-      if (!Array.isArray(d.times)) throw new Error("fmt");
-      setTimes(d.times || []); setGrupos(d.grupos || []); setMatches(d.matches || []); setBracket(d.bracket || null);
-      setSlotMsg({ ok: true, t: 'Restaurado "' + (o.n || nomeOuKey) + '".' });
-    } catch (e) { setSlotMsg({ ok: false, t: "Palavra-chave inválida ou dados corrompidos." }); }
-    setTimeout(() => setSlotMsg(null), 3000);
-  };
-  const excluirSlot = async (key) => {
-    try { await dbDel(key); const idx = slots.filter((s) => s.key !== key); await dbSet("copa:slotindex", JSON.stringify(idx)); setSlots(idx); } catch (e) {}
-  };
-
   // carrega os dados salvos ao abrir
   useEffect(() => {
     let vivo = true;
@@ -307,7 +273,7 @@ function CopaFutebol() {
           }
         } catch (e) { /* ainda não há dados salvos */ }
       }
-      if (vivo) { refreshSlots(); setCarregado(true); }
+      if (vivo) setCarregado(true);
     })();
     return () => { vivo = false; };
   }, []);
@@ -330,35 +296,6 @@ function CopaFutebol() {
     setTimes([]); setGrupos([]); setMatches([]); setBracket(null); setAtiva(null);
     setConfirmReset(false);
     if (hasDB) { try { await dbDel(STORAGE_KEY); } catch (e) {} setStatus("saved"); }
-  };
-
-  // ------- backup manual (rede de segurança universal) -------
-  const [restoreText, setRestoreText] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [restoreMsg, setRestoreMsg] = useState(null);
-  const backupJSON = useMemo(() => {
-    const t = incluirEscudos ? times : times.map(({ escudo, ...r }) => r);
-    return JSON.stringify({ v: 1, exportado: new Date().toISOString(), times: t, grupos, matches, bracket });
-  }, [times, grupos, matches, bracket, incluirEscudos]);
-  const copiarBackup = async () => {
-    try {
-      await navigator.clipboard.writeText(backupJSON);
-      setCopied(true); setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      const el = document.getElementById("backup-out");
-      if (el) { el.focus(); el.select(); }
-    }
-  };
-  const restaurar = () => {
-    try {
-      const d = JSON.parse(restoreText.trim());
-      if (!d || typeof d !== "object" || !Array.isArray(d.times)) throw new Error("fmt");
-      setTimes(d.times || []); setGrupos(d.grupos || []); setMatches(d.matches || []); setBracket(d.bracket || null);
-      setRestoreText(""); setRestoreMsg({ ok: true, t: "Backup restaurado com sucesso." });
-    } catch (e) {
-      setRestoreMsg({ ok: false, t: "Código inválido. Cole o texto completo do backup." });
-    }
-    setTimeout(() => setRestoreMsg(null), 3000);
   };
 
   // ------- cadastro de times/jogadores -------
@@ -1135,57 +1072,6 @@ function CopaFutebol() {
                   ? "Salvamento automático ativo neste aparelho."
                   : "Neste ambiente o salvamento automático não está disponível. Use o código de backup abaixo.")}
           </div>
-
-          {edit && !cloudOn && (<>
-          <div style={S.groupTitle}>Salvar com palavra-chave</div>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Guarde o torneio neste aparelho com um nome fácil e restaure depois só digitando a palavra. Sem código gigante.</div>
-          <input style={{ ...S.input, width: "100%", boxSizing: "border-box" }} placeholder="ex.: copa2026" value={slotName} onChange={(e) => setSlotName(e.target.value)} />
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button style={S.primaryBtn} onClick={salvarSlot}><Save size={15} /> Salvar</button>
-            <button style={S.ghostBtn} onClick={() => restaurarSlot(slotName)}><RefreshCw size={15} /> Restaurar</button>
-          </div>
-          {slotMsg && <div style={{ fontSize: 13, marginTop: 8, color: slotMsg.ok ? "#22c55e" : "#ef4444" }}>{slotMsg.t}</div>}
-          {slots.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>Salvos neste aparelho (toque para restaurar):</div>
-              {slots.map((s) => (
-                <div key={s.key} style={S.slotRow}>
-                  <button style={S.slotName} onClick={() => restaurarSlot(s.key)}>
-                    <Database size={14} color="#3b82f6" />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.n}</span>
-                  </button>
-                  <button style={S.miniDel} onClick={() => excluirSlot(s.key)}><X size={15} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div style={{ height: 1, background: "#334155", margin: "24px 0" }} />
-          </>)}
-
-          {!cloudOn && (<>
-          <div style={S.groupTitle}>Código de backup (para outro aparelho)</div>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Use isto só para levar o torneio para outro celular ou navegador.</div>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#cbd5e1", marginBottom: 8, cursor: "pointer" }}>
-            <input type="checkbox" checked={incluirEscudos} onChange={(e) => setIncluirEscudos(e.target.checked)} />
-            Incluir escudos (deixa o código bem maior)
-          </label>
-          <textarea id="backup-out" readOnly value={backupJSON} style={S.textarea} onFocus={(e) => e.target.select()} />
-          <div style={{ fontSize: 11, color: "#64748b", margin: "6px 0 8px" }}>Tamanho do código: {(backupJSON.length / 1024).toFixed(1)} KB</div>
-          <button style={{ ...S.primaryBtn, marginBottom: 22 }} onClick={copiarBackup}>
-            <Copy size={16} /> {copied ? "Copiado!" : "Copiar código"}
-          </button>
-          </>)}
-
-          {edit && !cloudOn && (<>
-          <div style={S.groupTitle}>Restaurar backup</div>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Cole um código de backup para substituir os dados atuais.</div>
-          <textarea placeholder="Cole o código do backup aqui…" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} style={S.textarea} />
-          <button style={{ ...S.ghostBtn, marginTop: 8 }} onClick={restaurar}><Save size={15} /> Restaurar</button>
-          {restoreMsg && <div style={{ fontSize: 13, marginTop: 8, color: restoreMsg.ok ? "#22c55e" : "#ef4444" }}>{restoreMsg.t}</div>}
-
-          <div style={{ height: 1, background: "#334155", margin: "24px 0" }} />
-          </>)}
 
           {edit && (<>
           <div style={S.groupTitle}>Zona de risco</div>
