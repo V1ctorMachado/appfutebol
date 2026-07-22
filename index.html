@@ -165,10 +165,9 @@ function fileParaDataURL(file, max, cb) {
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
       try {
-        let out = cv.toDataURL("image/jpeg", 0.7);
-        // se ainda ficar grande, reduz a qualidade progressivamente
-        let q = 0.6;
-        while (out.length > 24000 && q >= 0.3) { out = cv.toDataURL("image/jpeg", q); q -= 0.1; }
+        let out = cv.toDataURL("image/jpeg", 0.85);
+        let q = 0.75;
+        while (out.length > 120000 && q >= 0.4) { out = cv.toDataURL("image/jpeg", q); q -= 0.1; }
         cb(out);
       } catch (e) { cb(null); }
     };
@@ -208,6 +207,40 @@ async function hashSenha(s) {
   } catch (e) { return "x" + (s || "").length; }
 }
 
+// Trava de segurança: localiza arrays aninhados antes de enviar ao Firestore.
+function acharArrayAninhado(obj, caminho) {
+  caminho = caminho || "dados";
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      if (Array.isArray(obj[i])) return caminho + "[" + i + "]";
+      const r = acharArrayAninhado(obj[i], caminho + "[" + i + "]");
+      if (r) return r;
+    }
+  } else if (obj && typeof obj === "object") {
+    for (const k of Object.keys(obj)) {
+      const r = acharArrayAninhado(obj[k], caminho + "." + k);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+// O Firestore NÃO aceita array dentro de array. O bracket guarda `rounds` como
+// lista de listas, então convertemos para lista de objetos ao gravar e voltamos ao ler.
+function bracketParaNuvem(b) {
+  if (!b) return null;
+  return {
+    finalId: b.finalId || null,
+    thirdId: b.thirdId || null,
+    rounds: (b.rounds || []).map((ids) => ({ ids: ids || [] })),
+  };
+}
+function bracketDaNuvem(b) {
+  if (!b) return null;
+  const rounds = (b.rounds || []).map((r) => (Array.isArray(r) ? r : (r && r.ids) || []));
+  return { finalId: b.finalId || null, thirdId: b.thirdId || null, rounds };
+}
+
 function CopaFutebol() {
   const [tela, setTela] = useState("times"); // times | grupos | mata | artilharia
   const [times, setTimes] = useState(SETUP.times);   // {id,nome,jogadores:[{id,numero,nome,posicao}]}
@@ -232,6 +265,7 @@ function CopaFutebol() {
   const [orgMsg, setOrgMsg] = useState(null);
   const [nuvem, setNuvem] = useState(cloudOn ? "conectando" : "off"); // off | conectando | ok | erro | grande
   const [nuvemMsg, setNuvemMsg] = useState(null);
+  const [escudos, setEscudos] = useState({}); // {timeId: dataURL} — vindos de documentos próprios
   const lastSynced = useRef(null);
   const edit = isOrg;
 
@@ -268,41 +302,80 @@ function CopaFutebol() {
         setNuvem("ok");
         if (!snap.exists) return;
         const d = snap.data();
-        const str = JSON.stringify({ times: d.times || [], grupos: d.grupos || [], matches: d.matches || [], bracket: d.bracket || null });
+        const str = JSON.stringify({ times: d.times || [], grupos: d.grupos || [], matches: d.matches || [], bracket: bracketDaNuvem(d.bracket) });
         if (str !== lastSynced.current) {
           lastSynced.current = str;
           const o = JSON.parse(str);
-          setTimes(o.times); setGrupos(o.grupos); setMatches(o.matches); setBracket(o.bracket);
+          // preserva os escudos já carregados (eles vivem em documentos próprios)
+          setTimes(o.times.map((t) => (escudos[t.id] ? { ...t, escudo: escudos[t.id] } : t)));
+          setGrupos(o.grupos); setMatches(o.matches); setBracket(o.bracket);
         }
       },
       () => setNuvem("erro")
     );
     return () => unsub();
+  }, [escudos]);
+
+  // escudos ficam em documentos separados: assim o limite de 1 MB vale por escudo,
+  // e não para o torneio inteiro.
+  useEffect(() => {
+    if (!fb) return;
+    const unsub = fb.collection("escudos").onSnapshot(
+      (snap) => {
+        const mapa = {};
+        snap.forEach((doc) => { const v = doc.data(); if (v && v.img) mapa[doc.id] = v.img; });
+        setEscudos(mapa);
+      },
+      () => {}
+    );
+    return () => unsub();
   }, []);
+
+  // aplica os escudos vindos da nuvem sobre os times
+  useEffect(() => {
+    if (!fb || !Object.keys(escudos).length) return;
+    setTimes((prev) => {
+      let mudou = false;
+      const novo = prev.map((t) => {
+        const e = escudos[String(t.id)] || escudos[t.id] || null;
+        if (e && t.escudo !== e) { mudou = true; return { ...t, escudo: e }; }
+        return t;
+      });
+      return mudou ? novo : prev;
+    });
+  }, [escudos]);
 
   // organizador envia mudanças para a nuvem (debounce)
   useEffect(() => {
     if (!fb || !carregado || !isOrg) return;
-    const cur = JSON.stringify({ times, grupos, matches, bracket });
+    // os escudos NÃO vão no documento principal: cada um tem o seu próprio
+    const timesLeves = times.map(({ escudo, ...r }) => r);
+    const cur = JSON.stringify({ times: timesLeves, grupos, matches, bracket });
     if (cur === lastSynced.current) return;
     const t = setTimeout(async () => {
-      // O Firestore recusa documentos acima de 1 MB. Avisamos antes de tentar.
       const kb = Math.round(cur.length / 1024);
       if (cur.length > 900 * 1024) {
         setNuvem("grande");
-        setNuvemMsg("Os dados estão em " + kb + " KB e o limite da nuvem é 1000 KB. Remova alguns escudos (aba Times) para voltar a salvar.");
+        setNuvemMsg("Os dados do torneio estão em " + kb + " KB e o limite por documento é 1000 KB.");
         return;
       }
       try {
+        const payload = { times: timesLeves, grupos, matches, bracket: bracketParaNuvem(bracket), _at: Date.now() };
+        const ruim = acharArrayAninhado(payload);
+        if (ruim) {
+          setNuvem("erro");
+          setNuvemMsg("Estrutura inválida para a nuvem em " + ruim + ". Avise o desenvolvedor.");
+          return;
+        }
         lastSynced.current = cur;
-        await fb.collection("torneio").doc("estado").set({ times, grupos, matches, bracket, _at: Date.now() });
+        await fb.collection("torneio").doc("estado").set(payload);
         setNuvem("ok"); setNuvemMsg(null);
       } catch (e) {
-        lastSynced.current = null; // permite nova tentativa
+        lastSynced.current = null;
         const msg = String((e && (e.message || e.code)) || "");
         if (/exceeds the maximum allowed size|too large|INVALID_ARGUMENT/i.test(msg)) {
           setNuvem("grande");
-          setNuvemMsg("A nuvem recusou por tamanho (" + kb + " KB). Remova alguns escudos na aba Times.");
+          setNuvemMsg("A nuvem recusou por tamanho (" + kb + " KB).");
         } else if (/permission|PERMISSION_DENIED|insufficient/i.test(msg)) {
           setNuvem("erro");
           setNuvemMsg("A nuvem recusou a gravação por permissão. Verifique as regras do Firestore.");
@@ -391,8 +464,20 @@ function CopaFutebol() {
     setTimes(times.map((t) => t.id === tid
       ? { ...t, jogadores: t.jogadores.map((j) => j.id === jid ? { ...j, [campo]: valor } : j) }
       : t));
-  const setEscudo = (tid, url) =>
+  const setEscudo = (tid, url) => {
     setTimes(times.map((t) => t.id === tid ? { ...t, escudo: url } : t));
+    if (fb) {
+      const ref = fb.collection("escudos").doc(String(tid));
+      const p = url ? ref.set({ img: url, _at: Date.now() }) : ref.delete();
+      Promise.resolve(p).catch((e) => {
+        const msg = String((e && (e.message || e.code)) || "");
+        setNuvem(/exceeds the maximum|too large|INVALID_ARGUMENT/i.test(msg) ? "grande" : "erro");
+        setNuvemMsg(/exceeds the maximum|too large|INVALID_ARGUMENT/i.test(msg)
+          ? "Esse escudo é grande demais. Use uma imagem menor."
+          : "Não foi possível salvar o escudo agora.");
+      });
+    }
+  };
   const renameTime = (tid, nome) =>
     setTimes(times.map((t) => t.id === tid ? { ...t, nome } : t));
 
@@ -789,7 +874,7 @@ function CopaFutebol() {
       {/* -------- TIMES -------- */}
       {tela === "times" && (
         <div style={S.body}>
-          {grupos.length > 0 && edit && <div style={S.lock}>Times travados — o sorteio já foi feito. Use Reiniciar na aba Grupos para zerar.</div>}
+          {grupos.length > 0 && edit && <div style={S.lock}>Times travados — o torneio já foi montado. Use "Zerar placares" na aba Grupos para reiniciar os jogos.</div>}
           {grupos.length === 0 && edit && (
             <div style={S.inputRow}>
               <input style={S.input} placeholder="Nome do time" value={nomeTime}
@@ -821,7 +906,7 @@ function CopaFutebol() {
                     <label style={S.uploadBtn}>
                       <ImagePlus size={15} /> {t.escudo ? "Trocar" : "Adicionar"}
                       <input type="file" accept="image/*" style={{ display: "none" }}
-                        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) fileParaDataURL(f, 72, (url) => url && setEscudo(t.id, url)); e.target.value = ""; }} />
+                        onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) fileParaDataURL(f, 160, (url) => url && setEscudo(t.id, url)); e.target.value = ""; }} />
                     </label>
                     {t.escudo && <button style={S.miniDel} onClick={() => setEscudo(t.id, null)}><X size={16} /></button>}
                   </div>
@@ -1200,14 +1285,8 @@ function CopaFutebol() {
                   : "Neste ambiente o salvamento automático não está disponível.")}
             {cloudOn && edit && (
               <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>
-                Tamanho atual dos dados: {(JSON.stringify({ times, grupos, matches, bracket }).length / 1024).toFixed(0)} KB de 1000 KB
+                Dados do torneio: {(JSON.stringify({ times: times.map(({ escudo, ...r }) => r), grupos, matches, bracket }).length / 1024).toFixed(0)} KB de 1000 KB · escudos salvos à parte
               </div>
-            )}
-            {cloudOn && edit && nuvem === "grande" && (
-              <button style={{ ...S.ghostBtn, marginTop: 10, color: "#f59e0b", borderColor: "#78350f" }}
-                onClick={() => setTimes(times.map((t) => ({ ...t, escudo: null })))}>
-                <Trash2 size={15} /> Remover todos os escudos
-              </button>
             )}
           </div>
 
