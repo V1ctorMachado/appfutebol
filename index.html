@@ -57,6 +57,7 @@ const ICONS = {
   handshake: (<><path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"/><path d="M3 4h8"/></>),
   hand: (<><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></>),
   medal: (<><path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/><path d="M11 12 5.12 2.2"/><path d="m13 12 5.88-9.8"/><path d="M8 7h8"/><circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/></>),
+  pencil: (<><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></>),
   shuffle: (<><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.8-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.3 0 2.6.7 3.3 1.9"/><path d="M22 18h-6c-1.3 0-2.6-.7-3.3-1.9"/><path d="m18 14 4 4-4 4"/></>),
 };
 function Ic(name, props) {
@@ -79,7 +80,8 @@ const Trophy=(p)=>Ic("trophy",p), Users=(p)=>Ic("users",p), Plus=(p)=>Ic("plus",
   X=(p)=>Ic("x",p), Flag=(p)=>Ic("flag",p), GitMerge=(p)=>Ic("gitMerge",p), Crown=(p)=>Ic("crown",p),
   Target=(p)=>Ic("target",p), RefreshCw=(p)=>Ic("refreshCw",p), Database=(p)=>Ic("database",p),
   Copy=(p)=>Ic("copy",p), Save=(p)=>Ic("save",p), ImagePlus=(p)=>Ic("imagePlus",p),
-  Handshake=(p)=>Ic("handshake",p), Hand=(p)=>Ic("hand",p), Medal=(p)=>Ic("medal",p), Shuffle=(p)=>Ic("shuffle",p);
+  Handshake=(p)=>Ic("handshake",p), Hand=(p)=>Ic("hand",p), Medal=(p)=>Ic("medal",p),
+  Pencil=(p)=>Ic("pencil",p), Shuffle=(p)=>Ic("shuffle",p);
 
 /* ================= APP ================= */
 
@@ -304,6 +306,7 @@ function CopaFutebol() {
   const [jNome, setJNome] = useState("");
   const [jNum, setJNum] = useState("");
   const [jPos, setJPos] = useState("ATA");
+  const [editJog, setEditJog] = useState(null); // id do jogador em edição
 
   const nomeDoTime = (id) => times.find((t) => t.id === id)?.nome || "?";
   const timeObj = (id) => times.find((t) => t.id === id);
@@ -326,6 +329,10 @@ function CopaFutebol() {
   };
   const removeJog = (tid, jid) =>
     setTimes(times.map((t) => t.id === tid ? { ...t, jogadores: t.jogadores.filter((j) => j.id !== jid) } : t));
+  const updateJog = (tid, jid, campo, valor) =>
+    setTimes(times.map((t) => t.id === tid
+      ? { ...t, jogadores: t.jogadores.map((j) => j.id === jid ? { ...j, [campo]: valor } : j) }
+      : t));
   const setEscudo = (tid, url) =>
     setTimes(times.map((t) => t.id === tid ? { ...t, escudo: url } : t));
   const renameTime = (tid, nome) =>
@@ -753,9 +760,36 @@ function CopaFutebol() {
                   </>)}
                   {t.jogadores.sort((a, b) => (+a.numero || 99) - (+b.numero || 99)).map((j) => (
                     <div key={j.id} style={S.playerRow}>
-                      <span><b style={{ color: "#3b82f6", display: "inline-block", width: 24 }}>{j.numero || "–"}</b>
-                        {j.nome} <span style={S.posTag}>{j.posicao}</span></span>
-                      {edit && <button style={S.miniDel} onClick={() => removeJog(t.id, j.id)}><X size={14} /></button>}
+                      {editJog === j.id && edit ? (
+                        <div style={{ width: "100%" }}>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <input style={{ ...S.input, width: 46, flex: "none", textAlign: "center" }} placeholder="Nº" value={j.numero || ""}
+                              onChange={(e) => updateJog(t.id, j.id, "numero", e.target.value)} />
+                            <input style={S.input} placeholder="Nome" value={j.nome}
+                              onChange={(e) => updateJog(t.id, j.id, "nome", e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && setEditJog(null)} />
+                            <select style={{ ...S.select, width: 70, flex: "none", padding: "0 4px" }} value={j.posicao}
+                              onChange={(e) => updateJog(t.id, j.id, "posicao", e.target.value)}>
+                              {POS.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                            <button style={{ ...S.primaryBtn, padding: "7px" }} onClick={() => setEditJog(null)}>Pronto</button>
+                            <button style={{ ...S.ghostBtn, color: "#ef4444", borderColor: "#7f1d1d", padding: "7px" }}
+                              onClick={() => { removeJog(t.id, j.id); setEditJog(null); }}>
+                              <Trash2 size={14} /> Excluir
+                            </button>
+                          </div>
+                        </div>
+                      ) : (<>
+                        <span><b style={{ color: "#3b82f6", display: "inline-block", width: 24 }}>{j.numero || "–"}</b>
+                          {j.nome} <span style={S.posTag}>{j.posicao}</span></span>
+                        {edit && (
+                          <button style={S.editBtn} onClick={() => setEditJog(j.id)} title="Editar jogador">
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                      </>)}
                     </div>
                   ))}
                   {edit && (
@@ -1252,6 +1286,7 @@ const S = {
   playerStat: { padding: "10px 0", borderBottom: "1px solid #263449" },
   posTag: { fontSize: 10, background: "#334155", color: "#94a3b8", padding: "1px 6px", borderRadius: 6, marginLeft: 6 },
   playerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #263449", fontSize: 14 },
+  editBtn: { background: "none", border: "1px solid #334155", borderRadius: 6, color: "#94a3b8", cursor: "pointer", padding: "5px 7px", display: "flex", alignItems: "center", flex: "none" },
   miniDel: { background: "none", border: "none", color: "#ef4444", cursor: "pointer", display: "flex", padding: 4 },
   empty: { textAlign: "center", color: "#64748b", padding: "30px 10px", fontSize: 14, lineHeight: 1.6 },
   groupTitle: { fontSize: 15, fontWeight: 700, color: "#f8fafc", marginBottom: 8, paddingLeft: 2 },
