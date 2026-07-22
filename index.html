@@ -93,6 +93,35 @@ async function dbGet(key) { try { return window.localStorage.getItem(key); } cat
 async function dbSet(key, val) { window.localStorage.setItem(key, val); }
 async function dbDel(key) { window.localStorage.removeItem(key); }
 
+// Gera os confrontos em rodadas (algoritmo do círculo), evitando que um time
+// jogue várias partidas seguidas — importante quando tudo acontece no mesmo dia.
+function gerarRodadas(ids) {
+  const a = ids.slice();
+  if (a.length % 2) a.push(null);
+  const n = a.length, rodadas = [];
+  for (let r = 0; r < n - 1; r++) {
+    const jogos = [];
+    for (let i = 0; i < n / 2; i++) {
+      const x = a[i], y = a[n - 1 - i];
+      if (x != null && y != null) jogos.push(r % 2 === 0 ? [x, y] : [y, x]);
+    }
+    rodadas.push(jogos);
+    a.splice(1, 0, a.pop()); // gira mantendo o primeiro fixo
+  }
+  // achata intercalando: evita repetir na sequência o time do jogo anterior
+  const seq = [];
+  rodadas.forEach((r) => {
+    const pool = r.slice();
+    while (pool.length) {
+      const ult = seq.length ? seq[seq.length - 1] : [];
+      let k = pool.findIndex((g) => g[0] !== ult[0] && g[0] !== ult[1] && g[1] !== ult[0] && g[1] !== ult[1]);
+      if (k < 0) k = 0;
+      seq.push(pool.splice(k, 1)[0]);
+    }
+  });
+  return seq;
+}
+
 // Setup fixo do torneio: 2 grupos na ordem definida (sem sorteio).
 function buildSetup() {
   const spec = [
@@ -114,9 +143,9 @@ function buildSetup() {
       ids.push(tid);
     });
     grupos.push({ id: g.gid, nome: g.gnome, timeIds: ids });
-    for (let i = 0; i < ids.length; i++)
-      for (let j = i + 1; j < ids.length; j++)
-        matches.push({ id: "M" + (mc++), ko: false, grupoId: g.gid, timeA: ids[i], timeB: ids[j], eventos: [], finalizada: false });
+    gerarRodadas(ids).forEach(([a, b]) => {
+      matches.push({ id: "M" + (mc++), ko: false, grupoId: g.gid, timeA: a, timeB: b, eventos: [], finalizada: false });
+    });
   });
   return { times, grupos, matches };
 }
@@ -361,9 +390,17 @@ function CopaFutebol() {
   const refazer = () => { setGrupos([]); setMatches([]); setBracket(null); setAtiva(null); };
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [confirmZerarTudo, setConfirmZerarTudo] = useState(false);
-  // Zera SOMENTE os placares: preserva times, jogadores, nomes editados e escudos.
+  // Zera SOMENTE os placares e reordena os jogos em rodadas equilibradas.
+  // Preserva times, jogadores, nomes editados e escudos.
   const zerarResultados = () => {
-    setMatches((prev) => prev.filter((m) => !m.ko).map((m) => ({ ...m, eventos: [], finalizada: false, penA: null, penB: null })));
+    let mc = 1;
+    const novos = [];
+    grupos.forEach((g) => {
+      gerarRodadas(g.timeIds).forEach(([a, b]) => {
+        novos.push({ id: "M" + (mc++), ko: false, grupoId: g.id, timeA: a, timeB: b, eventos: [], finalizada: false });
+      });
+    });
+    setMatches(novos);
     setBracket(null); setAtiva(null); setConfirmRestart(false);
   };
   // Recomeça do zero: recria times/grupos/jogos a partir do setup fixo (apaga cadastro).
@@ -873,9 +910,18 @@ function CopaFutebol() {
                     ))}
                   </div>
                   <div style={{ marginTop: 8 }}>
-                    {matches.filter((m) => !m.ko && m.grupoId === g.id).map((m) => (
-                      <MatchLine key={m.id} m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} />
-                    ))}
+                    {(() => {
+                      const jogos = matches.filter((m) => !m.ko && m.grupoId === g.id);
+                      const porRodada = Math.max(1, Math.floor(g.timeIds.length / 2));
+                      return jogos.map((m, i) => (
+                        <div key={m.id}>
+                          {i % porRodada === 0 && (
+                            <div style={S.roundLabel}>Rodada {Math.floor(i / porRodada) + 1}</div>
+                          )}
+                          <MatchLine m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} />
+                        </div>
+                      ));
+                    })()}
                   </div>
                 </div>
               ))}
@@ -1287,6 +1333,7 @@ const S = {
   posTag: { fontSize: 10, background: "#334155", color: "#94a3b8", padding: "1px 6px", borderRadius: 6, marginLeft: 6 },
   playerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #263449", fontSize: 14 },
   editBtn: { background: "none", border: "1px solid #334155", borderRadius: 6, color: "#94a3b8", cursor: "pointer", padding: "5px 7px", display: "flex", alignItems: "center", flex: "none" },
+  roundLabel: { fontSize: 11, fontWeight: 700, color: "#64748b", letterSpacing: 0.5, textTransform: "uppercase", margin: "10px 0 6px", paddingLeft: 2 },
   miniDel: { background: "none", border: "none", color: "#ef4444", cursor: "pointer", display: "flex", padding: 4 },
   empty: { textAlign: "center", color: "#64748b", padding: "30px 10px", fontSize: 14, lineHeight: 1.6 },
   groupTitle: { fontSize: 15, fontWeight: 700, color: "#f8fafc", marginBottom: 8, paddingLeft: 2 },
