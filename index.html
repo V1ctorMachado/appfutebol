@@ -316,14 +316,19 @@ function CopaFutebol() {
     return () => unsub();
   }, [escudos]);
 
-  // escudos ficam em documentos separados: assim o limite de 1 MB vale por escudo,
-  // e não para o torneio inteiro.
+  // escudos ficam em documentos próprios dentro de "torneio" (escudo_<id>): assim o
+  // limite de 1 MB vale por escudo, e as regras da coleção já cobrem esses documentos.
   useEffect(() => {
     if (!fb) return;
-    const unsub = fb.collection("escudos").onSnapshot(
+    const unsub = fb.collection("torneio").onSnapshot(
       (snap) => {
         const mapa = {};
-        snap.forEach((doc) => { const v = doc.data(); if (v && v.img) mapa[doc.id] = v.img; });
+        snap.forEach((doc) => {
+          if (doc.id.indexOf("escudo_") === 0) {
+            const v = doc.data();
+            if (v && v.img) mapa[doc.id.slice(7)] = v.img;
+          }
+        });
         setEscudos(mapa);
       },
       () => {}
@@ -467,15 +472,25 @@ function CopaFutebol() {
   const setEscudo = (tid, url) => {
     setTimes(times.map((t) => t.id === tid ? { ...t, escudo: url } : t));
     if (fb) {
-      const ref = fb.collection("escudos").doc(String(tid));
+      // Guardamos cada escudo num documento próprio DENTRO da coleção "torneio"
+      // (que já é permitida pelas regras), evitando o limite de 1 MB do documento principal.
+      const ref = fb.collection("torneio").doc("escudo_" + tid);
       const p = url ? ref.set({ img: url, _at: Date.now() }) : ref.delete();
-      Promise.resolve(p).catch((e) => {
-        const msg = String((e && (e.message || e.code)) || "");
-        setNuvem(/exceeds the maximum|too large|INVALID_ARGUMENT/i.test(msg) ? "grande" : "erro");
-        setNuvemMsg(/exceeds the maximum|too large|INVALID_ARGUMENT/i.test(msg)
-          ? "Esse escudo é grande demais. Use uma imagem menor."
-          : "Não foi possível salvar o escudo agora.");
-      });
+      Promise.resolve(p)
+        .then(() => { setNuvem("ok"); setNuvemMsg(null); })
+        .catch((e) => {
+          const msg = String((e && (e.message || e.code)) || "");
+          if (/permission|PERMISSION_DENIED|insufficient/i.test(msg)) {
+            setNuvem("erro");
+            setNuvemMsg("A nuvem recusou por permissão. Verifique as regras do Firestore para a coleção \"torneio\".");
+          } else if (/exceeds the maximum|too large|INVALID_ARGUMENT/i.test(msg)) {
+            setNuvem("grande");
+            setNuvemMsg("Esse escudo é grande demais mesmo comprimido. Tente outra imagem.");
+          } else {
+            setNuvem("erro");
+            setNuvemMsg("Falha ao salvar o escudo: " + (msg || "erro desconhecido"));
+          }
+        });
     }
   };
   const renameTime = (tid, nome) =>
