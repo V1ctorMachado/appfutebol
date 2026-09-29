@@ -115,6 +115,26 @@ function gerarRodadas(ids) {
   return rodadas; // [[ [a,b], [c,d] ], [ ... ], ...]
 }
 
+// Jogos salvos por versões antigas podem estar sem "rodada" (tudo caía na Rodada 1).
+// Reorganiza só esses casos, mantendo ids, gols e resultados.
+function normalizarRodadas(grupos, matches) {
+  const precisa = (grupos || []).some((g) => {
+    const ms = matches.filter((m) => !m.ko && m.grupoId === g.id);
+    if (ms.some((m) => !m.rodada)) return true;
+    const vistos = new Set();
+    return ms.some((m) => [m.timeA, m.timeB].some((t) => { const k = m.rodada + ":" + t; if (vistos.has(k)) return true; vistos.add(k); return false; }));
+  });
+  if (!precisa) return matches;
+  const rodadaDoPar = {};
+  (grupos || []).forEach((g) => gerarRodadas(g.timeIds).forEach((jogos, ri) =>
+    jogos.forEach(([a, b]) => { rodadaDoPar[g.id + ":" + Math.min(a, b) + "-" + Math.max(a, b)] = ri + 1; })));
+  return matches.map((m) => {
+    if (m.ko) return m;
+    const r = rodadaDoPar[m.grupoId + ":" + Math.min(m.timeA, m.timeB) + "-" + Math.max(m.timeA, m.timeB)];
+    return r ? { ...m, rodada: r } : m;
+  });
+}
+
 // Setup fixo do torneio: 2 grupos na ordem definida (sem sorteio).
 function buildSetup() {
   const spec = [
@@ -145,6 +165,75 @@ function buildSetup() {
   return { times, grupos, matches };
 }
 const SETUP = buildSetup();
+
+// Prioridade fixa no 1º campo: Time Azul (1) e Time Verde (2).
+// Se os dois jogarem no mesmo horário, o Time Azul fica com o 1º campo.
+const PRIORIDADE = [{ nome: "time azul", id: 1 }, { nome: "time verde", id: 8 }];
+const normNome = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+function idsPrioridade(times) {
+  return PRIORIDADE.map((p) => {
+    const t = times.find((x) => normNome(x.nome) === p.nome);
+    return t ? t.id : (times.some((x) => x.id === p.id) ? p.id : null);
+  });
+}
+// todas as formas de dividir os jogos em duplas (cada dupla = um horário, um jogo por campo)
+function paresPossiveis(lista) {
+  if (lista.length === 0) return [[]];
+  if (lista.length === 1) return [[[lista[0]]]];
+  const [primeiro, ...resto] = lista, out = [];
+  if (lista.length % 2) paresPossiveis(resto).forEach((p) => out.push([[primeiro], ...p]));
+  resto.forEach((par, i) => {
+    const sobra = resto.filter((_, k) => k !== i);
+    paresPossiveis(sobra).forEach((p) => out.push([[primeiro, par], ...p]));
+  });
+  return out;
+}
+// Sorteia uma rodada inteira: jogos que caem no mesmo horário ficam em campos diferentes.
+// Preferências: (1) Azul e Verde em horários diferentes, quando der; (2) um jogo de cada
+// grupo por horário. Se Azul e Verde dividirem o horário, o Azul fica com o 1º campo.
+function sortearJogos(jogos, prio, rnd = Math.random) {
+  const rank = (j) => (prio[0] != null && (j.A === prio[0] || j.B === prio[0])) ? 1
+                    : (prio[1] != null && (j.A === prio[1] || j.B === prio[1])) ? 2 : 0;
+  const custo = (par) => par.length < 2 ? 0
+    : (rank(par[0]) && rank(par[1]) ? 100 : 0) + (par[0].grupoId && par[0].grupoId === par[1].grupoId ? 1 : 0);
+  const opcoes = jogos.length > 10
+    ? [jogos.reduce((acc, j, i) => (i % 2 ? acc[acc.length - 1].push(j) : acc.push([j]), acc), [])]
+    : paresPossiveis(jogos);
+  let mCusto = Infinity, validas = [];
+  opcoes.forEach((p) => {
+    const c = p.reduce((t, par) => t + custo(par), 0);
+    if (c < mCusto) { mCusto = c; validas = [p]; } else if (c === mCusto) validas.push(p);
+  });
+  const horarios = [...(validas[Math.floor(rnd() * validas.length)] || [])];
+  for (let i = horarios.length - 1; i > 0; i--) { const k = Math.floor(rnd() * (i + 1)); [horarios[i], horarios[k]] = [horarios[k], horarios[i]]; }
+  const out = [];
+  horarios.forEach((h, hi) => {
+    let ordem;
+    if (h.length === 1) ordem = rank(h[0]) ? [h[0]] : (rnd() < 0.5 ? [h[0]] : [null, h[0]]);
+    else {
+      const [x, y] = h, rx = rank(x), ry = rank(y);
+      if (rx && (!ry || rx < ry)) ordem = [x, y];
+      else if (ry && (!rx || ry < rx)) ordem = [y, x];
+      else ordem = rnd() < 0.5 ? [x, y] : [y, x];
+    }
+    ordem.forEach((j, i) => { if (j) out.push({ id: j.id, campo: i + 1, horario: hi + 1 }); });
+  });
+  return out;
+}
+// confere se um sorteio salvo respeita a prioridade
+function respeitaPrioridade(sjogos, jogosInfo, prio) {
+  const info = Object.fromEntries(jogosInfo.map((j) => [j.id, j]));
+  const rank = (id) => { const j = info[id] || {}; return (prio[0] != null && (j.A === prio[0] || j.B === prio[0])) ? 1
+                    : (prio[1] != null && (j.A === prio[1] || j.B === prio[1])) ? 2 : 0; };
+  const vagas = new Set(sjogos.map((j) => j.horario + "-" + j.campo));
+  if (vagas.size !== sjogos.length) return false; // dois jogos no mesmo campo e horário
+  return sjogos.every((j) => {
+    const r = rank(j.id); if (!r) return true;
+    if (j.campo === 1) return true;
+    // só pode estar no 2º campo se for a prioridade 2 dividindo horário com a prioridade 1
+    return r === 2 && sjogos.some((o) => o.horario === j.horario && o.id !== j.id && rank(o.id) === 1);
+  });
+}
 
 // Lê um arquivo de imagem e devolve um data URL reduzido e comprimido.
 // Mantemos os escudos pequenos porque eles viajam dentro do documento da nuvem,
@@ -262,6 +351,9 @@ function CopaFutebol() {
   const [ativa, setAtiva] = useState(null); // matchId em foco
   const [statsView, setStatsView] = useState("times"); // times | rank
   const [statTime, setStatTime] = useState(null);
+  const [sorteios, setSorteios] = useState({}); // { "G0-R1": {jogos:[{id,campo,horario}]}, "K0": ... }
+  const [sorteando, setSorteando] = useState(null);
+  const [avisoSorteio, setAvisoSorteio] = useState(null);
 
   // ------- persistência (banco de dados do app) -------
   const [carregado, setCarregado] = useState(false);
@@ -314,13 +406,13 @@ function CopaFutebol() {
         setNuvem("ok");
         if (!snap.exists) return;
         const d = snap.data();
-        const str = JSON.stringify({ times: migrarPosicoes(d.times || []), grupos: d.grupos || [], matches: d.matches || [], bracket: bracketDaNuvem(d.bracket) });
+        const str = JSON.stringify({ times: migrarPosicoes(d.times || []), grupos: d.grupos || [], matches: normalizarRodadas(d.grupos || [], d.matches || []), bracket: bracketDaNuvem(d.bracket), sorteios: d.sorteios || {} });
         if (str !== lastSynced.current) {
           lastSynced.current = str;
           const o = JSON.parse(str);
           // preserva os escudos já carregados (eles vivem em documentos próprios)
           setTimes(o.times.map((t) => (escudos[t.id] ? { ...t, escudo: escudos[t.id] } : t)));
-          setGrupos(o.grupos); setMatches(o.matches); setBracket(o.bracket);
+          setGrupos(o.grupos); setMatches(o.matches); setBracket(o.bracket); setSorteios(o.sorteios);
         }
       },
       () => setNuvem("erro")
@@ -367,7 +459,7 @@ function CopaFutebol() {
     if (!fb || !carregado || !isOrg) return;
     // os escudos NÃO vão no documento principal: cada um tem o seu próprio
     const timesLeves = times.map(({ escudo, ...r }) => r);
-    const cur = JSON.stringify({ times: timesLeves, grupos, matches, bracket });
+    const cur = JSON.stringify({ times: timesLeves, grupos, matches, bracket, sorteios });
     if (cur === lastSynced.current) return;
     const t = setTimeout(async () => {
       const kb = Math.round(cur.length / 1024);
@@ -377,7 +469,7 @@ function CopaFutebol() {
         return;
       }
       try {
-        const payload = { times: timesLeves, grupos, matches, bracket: bracketParaNuvem(bracket), _at: Date.now() };
+        const payload = { times: timesLeves, grupos, matches, bracket: bracketParaNuvem(bracket), sorteios, _at: Date.now() };
         const ruim = acharArrayAninhado(payload);
         if (ruim) {
           setNuvem("erro");
@@ -403,7 +495,7 @@ function CopaFutebol() {
       }
     }, 700);
     return () => clearTimeout(t);
-  }, [times, grupos, matches, bracket, isOrg, carregado]);
+  }, [times, grupos, matches, bracket, sorteios, isOrg, carregado]);
 
   // carrega os dados salvos ao abrir
   useEffect(() => {
@@ -417,8 +509,9 @@ function CopaFutebol() {
             if (Array.isArray(d.times) && d.times.length > 0) {
               setTimes(d.times);
               setGrupos(d.grupos || []);
-              setMatches(d.matches || []);
+              setMatches(normalizarRodadas(d.grupos || [], d.matches || []));
               setBracket(d.bracket || null);
+              if (d.sorteios) setSorteios(d.sorteios);
             }
           }
         } catch (e) { /* ainda não há dados salvos */ }
@@ -435,15 +528,15 @@ function CopaFutebol() {
     setStatus("saving");
     saveTimer.current = setTimeout(async () => {
       try {
-        await dbSet(STORAGE_KEY, JSON.stringify({ times, grupos, matches, bracket }));
+        await dbSet(STORAGE_KEY, JSON.stringify({ times, grupos, matches, bracket, sorteios }));
         setStatus("saved");
       } catch (e) { setStatus("error"); }
     }, 600);
     return () => clearTimeout(saveTimer.current);
-  }, [times, grupos, matches, bracket, carregado]);
+  }, [times, grupos, matches, bracket, sorteios, carregado]);
 
   const apagarTudo = async () => {
-    setTimes([]); setGrupos([]); setMatches([]); setBracket(null); setAtiva(null);
+    setTimes([]); setGrupos([]); setMatches([]); setBracket(null); setAtiva(null); setSorteios({});
     setConfirmReset(false);
     if (hasDB) { try { await dbDel(STORAGE_KEY); } catch (e) {} setStatus("saved"); }
   };
@@ -543,13 +636,13 @@ function CopaFutebol() {
         });
       });
     });
-    setMatches(novos);
+    setMatches(novos); setSorteios({});
     setBracket(null); setAtiva(null); setConfirmRestart(false);
   };
   // Recomeça do zero: recria times/grupos/jogos a partir do setup fixo (apaga cadastro).
   const montarGrupos = () => {
     const s = buildSetup();
-    setTimes(s.times); setGrupos(s.grupos); setMatches(s.matches);
+    setTimes(s.times); setGrupos(s.grupos); setMatches(s.matches); setSorteios({});
     setBracket(null); setAtiva(null); setConfirmRestart(false); setConfirmZerarTudo(false);
   };
 
@@ -649,6 +742,7 @@ function CopaFutebol() {
     const koMatches = rounds.flat();
     setMatches((prev) => [...prev.filter((m) => !m.ko), ...koMatches]);
     setBracket({ rounds: rounds.map((r) => r.map((m) => m.id)), finalId: finalMatch.id, thirdId });
+    setSorteios((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k[0] !== "K"))); // chave nova, sorteio novo
   };
 
   // ------- resolver times do mata-mata (derivado) -------
@@ -683,6 +777,68 @@ function CopaFutebol() {
   }, [matches, standings, bracket, times]);
 
   const teamsOf = (m) => m.ko ? resolve.teamsByMatch[m.id] : { A: m.timeA, B: m.timeB };
+
+  // ------- sorteio dos campos -------
+  // As rodadas continuam as mesmas. A Rodada N de todos os grupos acontece junta: o sorteio
+  // divide esses jogos em horários (um jogo por campo) e decide o campo de cada um,
+  // sempre com o Time Azul (prioridade 1) e o Time Verde (prioridade 2) no 1º campo.
+  const campoDe = useMemo(() => {
+    const blocos = {};
+    matches.filter((m) => !m.ko).forEach((m) => { const k = "R" + (m.rodada || 1); (blocos[k] = blocos[k] || []).push(m.id); }); // rodada = os grupos juntos
+    if (bracket) bracket.rounds.forEach((rd, ri) => { blocos["K" + ri] = rd.filter((id) => matches.some((x) => x.id === id)); });
+    const mapa = {}, prio = idsPrioridade(times);
+    Object.entries(blocos).forEach(([k, ids]) => {
+      const sv = sorteios[k];
+      if (!sv || !Array.isArray(sv.jogos)) return;
+      if (sv.jogos.map((j) => j.id).sort().join() !== ids.slice().sort().join()) return; // sorteio antigo, ignora
+      const info = ids.map((id) => { const m = matches.find((x) => x.id === id); const t = (m && teamsOf(m)) || {}; return { id, A: t.A, B: t.B }; });
+      if (!respeitaPrioridade(sv.jogos, info, prio)) return; // feito sem a regra de prioridade: pede novo sorteio
+      const total = Math.max(...sv.jogos.map((j) => j.horario || 1));
+      sv.jogos.forEach((j) => { mapa[j.id] = { campo: j.campo, horario: j.horario || 1, total }; });
+    });
+    return mapa;
+  }, [matches, bracket, sorteios, times, resolve]);
+
+  const sortearCampos = (key, ids) => {
+    if (!edit || sorteando || !ids.length) return;
+    setSorteando(key);
+    setAvisoSorteio(null);
+    setTimeout(() => {
+      try {
+        const info = ids.map((id) => { const m = matches.find((x) => x.id === id); const t = (m && teamsOf(m)) || {}; return { id, A: t.A || null, B: t.B || null, grupoId: (m && m.grupoId) || null }; });
+        const prio = idsPrioridade(times);
+        let jogos = null;
+        for (let tent = 0; tent < 20 && !jogos; tent++) {
+          const r = sortearJogos(info, prio);
+          if (respeitaPrioridade(r, info, prio)) jogos = r;
+        }
+        if (jogos) setSorteios((prev) => ({ ...prev, [key]: { jogos, em: Date.now() } }));
+        else setAvisoSorteio({ key, msg: "Não deu para sortear: nesta rodada o mesmo time aparece em mais de um jogo. Confira a ordem dos jogos." });
+      } catch (e) {
+        setAvisoSorteio({ key, msg: "Erro no sorteio: " + ((e && e.message) || e) });
+      } finally {
+        setSorteando(null);
+      }
+    }, 900);
+  };
+
+  // botão/aviso de sorteio de uma rodada (ou fase do mata-mata)
+  const barraSorteio = (key, ms) => {
+    const ids = ms.map((m) => m.id);
+    const feito = ids.length > 0 && ids.every((id) => campoDe[id]);
+    const travado = ms.some((m) => m.finalizada || (m.eventos || []).length > 0);
+    if (sorteando === key) return <div style={S.sorteioBox}>🎲 Sorteando os campos…</div>;
+    const aviso = avisoSorteio && avisoSorteio.key === key
+      ? <div style={{ fontSize: 12, color: "#fca5a5", margin: "0 2px 8px" }}>{avisoSorteio.msg}</div> : null;
+    if (aviso && !(ids.length > 0 && ids.every((id) => campoDe[id]))) return <>{aviso}{edit && <button style={S.sorteioBtn} onClick={() => sortearCampos(key, ids)}>🎲 Tentar de novo</button>}</>;
+    if (!feito) return edit
+      ? <button style={S.sorteioBtn} onClick={() => sortearCampos(key, ids)}>🎲 Sortear campos{key[0] === "R" ? " da Rodada " + key.slice(1) + " (todos os grupos)" : ""}</button>
+      : <div style={S.sorteioHint}>Campos ainda não sorteados</div>;
+    if (edit && !travado) return <button style={S.sorteioLink} onClick={() => sortearCampos(key, ids)}>🎲 Sortear de novo</button>;
+    return null;
+  };
+  const porCampo = (ms) => [...ms].sort((x, y) =>
+    ((campoDe[x.id]?.horario || 0) - (campoDe[y.id]?.horario || 0)) || ((campoDe[x.id]?.campo || 0) - (campoDe[y.id]?.campo || 0)));
 
   // ------- artilharia + cartões -------
   const artilheiros = useMemo(() => {
@@ -816,7 +972,7 @@ function CopaFutebol() {
       <div style={S.app}>
         <div style={S.header}>
           <button style={S.iconBtn} onClick={() => setAtiva(null)}><ChevronLeft size={22} /></button>
-          <span style={S.headerTitle}>{m.fase || "Fase de grupos"}</span>
+          <span style={S.headerTitle}>{m.fase || "Fase de grupos"}{campoDe[m.id] ? " · " + campoDe[m.id].campo + "º campo" : ""}</span>
           {edit ? (
             <button style={{ ...S.iconBtn, color: m.finalizada ? "#22c55e" : "#94a3b8" }}
               onClick={() => { if (!(precisaPen && penInvalido)) toggleFim(m.id); }}>
@@ -1075,8 +1231,9 @@ function CopaFutebol() {
                               Rodada {rn}
                               {fim && <span style={S.roundDone}>concluída</span>}
                             </div>
-                            {doRound.map((m) => (
-                              <MatchLine key={m.id} m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} />
+                            {barraSorteio("R" + rn, matches.filter((x) => !x.ko && (x.rodada || 1) === rn))}
+                            {porCampo(doRound).map((m) => (
+                              <MatchLine key={m.id} m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} campo={campoDe[m.id]} />
                             ))}
                           </div>
                         );
@@ -1112,10 +1269,11 @@ function CopaFutebol() {
                 return (
                   <div key={ri} style={{ marginBottom: 20 }}>
                     <div style={S.groupTitle}>{ms[0].fase}</div>
-                    {ms.map((m) => {
+                    {barraSorteio("K" + ri, ms)}
+                    {porCampo(ms).map((m) => {
                       const { A, B } = teamsOf(m);
                       return <MatchLine key={m.id} m={m} a={A} b={B} nome={nomeDoTime} gol={golsNo}
-                        onOpen={A && B ? () => setAtiva(m.id) : null} pen={{ a: m.penA, b: m.penB }} />;
+                        onOpen={A && B ? () => setAtiva(m.id) : null} pen={{ a: m.penA, b: m.penB }} campo={campoDe[m.id]} />;
                     })}
                   </div>
                 );
@@ -1372,7 +1530,7 @@ function CopaFutebol() {
 }
 
 // ============ COMPONENTES ============
-function MatchLine({ m, a, b, nome, gol, onOpen, pen }) {
+function MatchLine({ m, a, b, nome, gol, onOpen, pen, campo }) {
   const gA = a ? gol(m, a) : 0, gB = b ? gol(m, b) : 0;
   return (
     <div style={{ ...S.matchCard, opacity: onOpen ? 1 : 0.7, cursor: onOpen ? "pointer" : "default" }} onClick={onOpen || undefined}>
@@ -1382,6 +1540,7 @@ function MatchLine({ m, a, b, nome, gol, onOpen, pen }) {
           {gA} – {gB}
           {pen && pen.a != null && pen.b != null && <span style={{ color: "#a78bfa" }}> (pên {pen.a}-{pen.b})</span>}
           {m.finalizada && <span style={S.miniTag}>encerrada</span>}
+          {campo && <span style={S.campoTag(campo.campo)}>{campo.campo}º campo{campo.total > 1 ? " · " + campo.horario + "º horário" : ""}</span>}
         </div>
       </div>
       {onOpen && <Play size={20} color="#22c55e" />}
@@ -1512,6 +1671,12 @@ const S = {
   matchCard: { display: "flex", alignItems: "center", gap: 8, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: "10px 12px", marginBottom: 8, minWidth: 0 },
   matchTeams: { fontWeight: 600, fontSize: 13, overflowWrap: "anywhere", lineHeight: 1.35 },
   matchScore: { fontSize: 12, color: "#94a3b8", marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
+  campoTag: (c) => ({ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 10, marginLeft: 6, whiteSpace: "nowrap",
+    background: c === 1 ? "#78350f" : "#1e3a8a", color: c === 1 ? "#fde68a" : "#bfdbfe" }),
+  sorteioBox: { background: "#422006", border: "1px solid #a16207", color: "#fde68a", borderRadius: 10, padding: "12px", textAlign: "center", fontWeight: 700, fontSize: 13, marginBottom: 8 },
+  sorteioBtn: { width: "100%", background: "#a16207", border: "none", borderRadius: 8, color: "#fff", padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 8 },
+  sorteioLink: { background: "none", border: "none", color: "#fbbf24", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "0 2px 6px" },
+  sorteioHint: { fontSize: 11, color: "#64748b", padding: "0 2px 6px" },
   miniTag: { fontSize: 10, background: "#166534", color: "#bbf7d0", padding: "1px 6px", borderRadius: 10 },
   section: { padding: "0 16px 20px" },
   sectionTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: "#cbd5e1" },
