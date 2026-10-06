@@ -1284,10 +1284,11 @@ function CopaFutebol() {
                     if (sorteando === sl.key) return <div style={S.sorteioBox}>🎲 Sorteando os campos…</div>;
                     if (!sl.sorteado) {
                       if (!edit) return sl.regra ? null : <div style={S.sorteioHint}>Campos ainda não sorteados.</div>;
+                      if (!next) return sl.regra ? null : <div style={S.sorteioHint}>O sorteio abre quando este for o próximo horário.</div>;
                       if (!porPos && !sl.pronto) return <div style={S.sorteioHint}>O sorteio libera quando os times deste horário estiverem definidos.</div>;
                       return <button style={S.sorteioBtn} onClick={acao}>🎲 Sortear campos do {sl.horario}º horário</button>;
                     }
-                    return edit && !sl.iniciado ? <button style={S.sorteioLink} onClick={acao}>🎲 Sortear de novo</button> : null;
+                    return edit && next && !sl.iniciado ? <button style={S.sorteioLink} onClick={acao}>🎲 Sortear de novo</button> : null;
                   })()}
                   {sl.regra && <div style={S.sorteioHint}>⚖️ {agenda.prio.filter((id) => id != null && sl.jogos.some((j) => { const t = teamsOf(j.m) || {}; return t.A === id || t.B === id; })).map((id) => nomeDoTime(id)).join(" e ")} neste horário: o campo segue a regra de prioridade.</div>}
                   {sl.tipo === "previa" && sl.sorteado && <div style={S.sorteioHint}>Se Galwan ou Os Fiéis chegarem aqui, a regra de prioridade vale por cima do sorteio.</div>}
