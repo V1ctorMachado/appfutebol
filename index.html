@@ -61,6 +61,7 @@ const ICONS = {
   hand: (<><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></>),
   medal: (<><path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/><path d="M11 12 5.12 2.2"/><path d="m13 12 5.88-9.8"/><path d="M8 7h8"/><circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/></>),
   pencil: (<><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></>),
+  clock: (<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>),
   shuffle: (<><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.8-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.3 0 2.6.7 3.3 1.9"/><path d="M22 18h-6c-1.3 0-2.6-.7-3.3-1.9"/><path d="m18 14 4 4-4 4"/></>),
 };
 function Ic(name, props) {
@@ -76,6 +77,7 @@ function Ic(name, props) {
     </svg>
   );
 }
+const Clock=(p)=>Ic("clock",p);
 const Trophy=(p)=>Ic("trophy",p), Users=(p)=>Ic("users",p), Plus=(p)=>Ic("plus",p),
   Trash2=(p)=>Ic("trash2",p), Goal=(p)=>Ic("goal",p), Square=(p)=>Ic("square",p),
   ArrowLeftRight=(p)=>Ic("arrowLeftRight",p), Play=(p)=>Ic("play",p), ChevronLeft=(p)=>Ic("chevronLeft",p),
@@ -168,11 +170,11 @@ const SETUP = buildSetup();
 
 // Prioridade fixa no 1º campo: Time Azul (1) e Time Verde (2).
 // Se os dois jogarem no mesmo horário, o Time Azul fica com o 1º campo.
-const PRIORIDADE = [{ nome: "time azul", id: 1 }, { nome: "time verde", id: 8 }];
+const PRIORIDADE = [{ nomes: ["galwan", "time azul"], id: 1 }, { nomes: ["os fieis fc", "os fieis", "time verde"], id: 8 }];
 const normNome = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 function idsPrioridade(times) {
   return PRIORIDADE.map((p) => {
-    const t = times.find((x) => normNome(x.nome) === p.nome);
+    const t = times.find((x) => p.nomes.includes(normNome(x.nome)));
     return t ? t.id : (times.some((x) => x.id === p.id) ? p.id : null);
   });
 }
@@ -343,7 +345,8 @@ function bracketDaNuvem(b) {
 }
 
 function CopaFutebol() {
-  const [tela, setTela] = useState("times"); // times | grupos | mata | artilharia
+  const [tela, setTela] = useState("times"); // times | agenda | grupos | mata | artilharia
+  const abriuAgenda = useRef(false);
   const [times, setTimes] = useState(SETUP.times);   // {id,nome,jogadores:[{id,numero,nome,posicao}]}
   const [grupos, setGrupos] = useState(SETUP.grupos); // {id,nome,timeIds:[]}
   const [matches, setMatches] = useState(SETUP.matches); // group + ko matches
@@ -777,27 +780,89 @@ function CopaFutebol() {
   }, [matches, standings, bracket, times]);
 
   const teamsOf = (m) => m.ko ? resolve.teamsByMatch[m.id] : { A: m.timeA, B: m.timeB };
+  // mata-mata encerrado empatado e sem pênaltis válidos: ninguém avança até preencher
+  const faltaPen = (m) => {
+    if (!m || !m.ko || !m.finalizada) return false;
+    const t = resolve.teamsByMatch[m.id] || {}; if (!t.A || !t.B) return false;
+    if (golsNo(m, t.A) !== golsNo(m, t.B)) return false;
+    return !(m.penA != null && m.penB != null && m.penA !== m.penB);
+  };
 
   // ------- sorteio dos campos -------
   // As rodadas continuam as mesmas. A Rodada N de todos os grupos acontece junta: o sorteio
   // divide esses jogos em horários (um jogo por campo) e decide o campo de cada um,
   // sempre com o Time Azul (prioridade 1) e o Time Verde (prioridade 2) no 1º campo.
-  const campoDe = useMemo(() => {
-    const blocos = {};
-    matches.filter((m) => !m.ko).forEach((m) => { const k = "R" + (m.rodada || 1); (blocos[k] = blocos[k] || []).push(m.id); }); // rodada = os grupos juntos
-    if (bracket) bracket.rounds.forEach((rd, ri) => { blocos["K" + ri] = rd.filter((id) => matches.some((x) => x.id === id)); });
-    const mapa = {}, prio = idsPrioridade(times);
-    Object.entries(blocos).forEach(([k, ids]) => {
-      const sv = sorteios[k];
-      if (!sv || !Array.isArray(sv.jogos)) return;
-      if (sv.jogos.map((j) => j.id).sort().join() !== ids.slice().sort().join()) return; // sorteio antigo, ignora
-      const info = ids.map((id) => { const m = matches.find((x) => x.id === id); const t = (m && teamsOf(m)) || {}; return { id, A: t.A, B: t.B }; });
-      if (!respeitaPrioridade(sv.jogos, info, prio)) return; // feito sem a regra de prioridade: pede novo sorteio
-      const total = Math.max(...sv.jogos.map((j) => j.horario || 1));
-      sv.jogos.forEach((j) => { mapa[j.id] = { campo: j.campo, horario: j.horario || 1, total }; });
+  const blocoKO = (ri) => {
+    const rd = (bracket && bracket.rounds[ri]) || [];
+    const juntos = bracket && bracket.thirdId && (rd.includes(bracket.finalId) || rd.includes(bracket.thirdId));
+    const ids = juntos ? [bracket.finalId, bracket.thirdId] : rd;
+    return { key: juntos ? "KF" : "K" + ri, ids: ids.filter((id) => matches.some((x) => x.id === id)) };
+  };
+
+  // ------- ORDEM OFICIAL DOS JOGOS -------
+  // Cada horário é a rodada de um grupo inteiro (os 2 jogos juntos, um em cada campo).
+  // O Grupo 2 abre cada rodada: G2 R1, G1 R1, G2 R2, G1 R2, G2 R3, G1 R3.
+  // Depois: intervalo, semifinais juntas, final e 3º lugar juntos.
+  // Campo: Galwan sempre no 1º; Os Fiéis Fc no 1º (se coincidir com o Galwan, vai pro 2º).
+  const agenda = useMemo(() => {
+    const prio = idsPrioridade(times);
+    const rank = (m) => { const t = teamsOf(m) || {};
+      return (prio[0] != null && (t.A === prio[0] || t.B === prio[0])) ? 1 : (prio[1] != null && (t.A === prio[1] || t.B === prio[1])) ? 2 : 9; };
+    const ordenar = (ms) => ms.map((m, i) => ({ m, i })).sort((x, y) => (rank(x.m) - rank(y.m)) || (x.i - y.i)).map((x) => x.m);
+    const slots = [];
+    const ordemGrupos = [...grupos].reverse();
+    const rods = [...new Set(matches.filter((m) => !m.ko).map((m) => m.rodada || 1))].sort((x, y) => x - y);
+    rods.forEach((r) => ordemGrupos.forEach((g) => {
+      const ms = ordenar(matches.filter((m) => !m.ko && m.grupoId === g.id && (m.rodada || 1) === r));
+      for (let i = 0; i < ms.length; i += 2)
+        slots.push({ tipo: "jogo", key: g.id + "-R" + r + "-" + (i / 2), titulo: "Rodada " + r + " · Grupo " + g.nome, jogos: ms.slice(i, i + 2).map((m) => ({ m, campo: null })) });
+    }));
+    if (slots.length) slots.push({ tipo: "intervalo" });
+    if (bracket) {
+      const vistos = new Set();
+      bracket.rounds.forEach((rd, ri) => {
+        const juntos = bracket.thirdId && (rd.includes(bracket.finalId) || rd.includes(bracket.thirdId));
+        const ids = (juntos ? [bracket.finalId, bracket.thirdId] : rd).filter((id) => !vistos.has(id));
+        ids.forEach((id) => vistos.add(id));
+        const ms = ordenar(ids.map((id) => matches.find((x) => x.id === id)).filter(Boolean));
+        if (!ms.length) return;
+        const titulo = juntos ? "Final e disputa de 3º lugar" : ms[0].fase;
+        for (let i = 0; i < ms.length; i += 2)
+          slots.push({ tipo: "jogo", key: (juntos ? "KF" : "K" + ri) + "-" + (i / 2), titulo, jogos: ms.slice(i, i + 2).map((m) => ({ m, campo: null })) });
+      });
+    } else if (slots.length) {
+      const g1 = grupos[0] ? grupos[0].nome : "1", g2 = grupos[1] ? grupos[1].nome : "2";
+      slots.push({ tipo: "previa", titulo: "Semifinais", linhas: [`1º Grupo ${g1} x 2º Grupo ${g2}`, `1º Grupo ${g2} x 2º Grupo ${g1}`] });
+      slots.push({ tipo: "previa", titulo: "Final e disputa de 3º lugar", linhas: ["Final: vencedores das semis", "3º lugar: perdedores das semis"] });
+    }
+    slots.forEach((sl) => {
+      if (sl.tipo !== "jogo") return;
+      const info = sl.jogos.map((j) => { const t = teamsOf(j.m) || {}; return { id: j.m.id, A: t.A || null, B: t.B || null }; });
+      sl.pronto = info.every((x) => x.A && x.B);
+      sl.iniciado = sl.jogos.some((j) => j.m.finalizada || (j.m.eventos || []).length > 0);
+      const sv = sorteios[sl.key];
+      const ids = info.map((x) => x.id).sort().join();
+      const valido = sl.pronto && sv && Array.isArray(sv.jogos) && sv.jogos.map((j) => j.id).sort().join() === ids &&
+        respeitaPrioridade(sv.jogos.map((j) => ({ id: j.id, campo: j.campo, horario: 1 })), info, prio);
+      sl.sorteado = !!valido;
+      if (valido) {
+        const cm = Object.fromEntries(sv.jogos.map((j) => [j.id, j.campo]));
+        sl.jogos.forEach((j) => { j.campo = cm[j.m.id]; });
+        sl.jogos.sort((x, y) => x.campo - y.campo);
+      }
     });
-    return mapa;
-  }, [matches, bracket, sorteios, times, resolve]);
+    let h = 0; const mapa = {};
+    slots.forEach((sl) => {
+      if (sl.tipo !== "intervalo") sl.horario = ++h;
+      if (sl.tipo === "jogo") sl.jogos.forEach((j) => { mapa[j.m.id] = { campo: j.campo, horario: sl.horario }; });
+    });
+    const proximo = slots.findIndex((sl) => sl.tipo === "jogo" && !sl.jogos.every((j) => j.m.finalizada && !faltaPen(j.m)));
+    return { slots, mapa, proximo, prio };
+  }, [grupos, matches, bracket, times, resolve, sorteios]);
+  const campoDe = agenda.mapa;
+  useEffect(() => { // ao abrir o app com o torneio montado, mostra a ordem dos jogos
+    if (!abriuAgenda.current && carregado && grupos.length > 0) { abriuAgenda.current = true; setTela((t) => t === "times" ? "agenda" : t); }
+  }, [carregado, grupos.length]);
 
   const sortearCampos = (key, ids) => {
     if (!edit || sorteando || !ids.length) return;
@@ -832,7 +897,7 @@ function CopaFutebol() {
       ? <div style={{ fontSize: 12, color: "#fca5a5", margin: "0 2px 8px" }}>{avisoSorteio.msg}</div> : null;
     if (aviso && !(ids.length > 0 && ids.every((id) => campoDe[id]))) return <>{aviso}{edit && <button style={S.sorteioBtn} onClick={() => sortearCampos(key, ids)}>🎲 Tentar de novo</button>}</>;
     if (!feito) return edit
-      ? <button style={S.sorteioBtn} onClick={() => sortearCampos(key, ids)}>🎲 Sortear campos{key[0] === "R" ? " da Rodada " + key.slice(1) + " (todos os grupos)" : ""}</button>
+      ? <button style={S.sorteioBtn} onClick={() => sortearCampos(key, ids)}>🎲 Sortear campos{key[0] === "R" ? " da Rodada " + key.slice(1) + " (todos os grupos)" : key === "KF" ? " da Final e 3º lugar" : ""}</button>
       : <div style={S.sorteioHint}>Campos ainda não sorteados</div>;
     if (edit && !travado) return <button style={S.sorteioLink} onClick={() => sortearCampos(key, ids)}>🎲 Sortear de novo</button>;
     return null;
@@ -972,7 +1037,7 @@ function CopaFutebol() {
       <div style={S.app}>
         <div style={S.header}>
           <button style={S.iconBtn} onClick={() => setAtiva(null)}><ChevronLeft size={22} /></button>
-          <span style={S.headerTitle}>{m.fase || "Fase de grupos"}{campoDe[m.id] ? " · " + campoDe[m.id].campo + "º campo" : ""}</span>
+          <span style={S.headerTitle}>{m.fase || "Fase de grupos"}{campoDe[m.id] ? " · " + campoDe[m.id].horario + "º horário" + (campoDe[m.id].campo ? " · " + campoDe[m.id].campo + "º campo" : "") : ""}</span>
           {edit ? (
             <button style={{ ...S.iconBtn, color: m.finalizada ? "#22c55e" : "#94a3b8" }}
               onClick={() => { if (!(precisaPen && penInvalido)) toggleFim(m.id); }}>
@@ -1156,6 +1221,76 @@ function CopaFutebol() {
       )}
 
       {/* -------- GRUPOS -------- */}
+      {tela === "agenda" && (
+        <div style={S.body}>
+          {agenda.slots.length === 0 ? (
+            <div style={S.empty}>Monte os grupos na aba Grupos para ver a ordem dos jogos.</div>
+          ) : (<>
+            <div style={{ ...S.card, padding: 12 }}>
+              <div style={{ ...S.sectionTitle, marginBottom: 6 }}><Clock size={17} color="#3b82f6" /> Ordem oficial dos jogos</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.55 }}>
+                Cada horário é a rodada de um grupo, com os 2 jogos <b style={{ color: "#e2e8f0" }}>ao mesmo tempo</b>, um em cada campo.
+                Assim todo time descansa um jogo entre uma partida e outra. O campo de cada jogo é <b style={{ color: "#e2e8f0" }}>sorteado</b> pelo organizador antes do horário
+                {agenda.prio.filter((x) => x != null).length > 0 ? <>, respeitando a regra: {agenda.prio.filter((x) => x != null).map((id) => nomeDoTime(id)).join(" e ")} jogam sempre no <b style={{ color: "#fde68a" }}>1º campo</b> (se jogarem juntos, {nomeDoTime(agenda.prio[0])} fica com o 1º).</> : "."}
+              </div>
+            </div>
+            {agenda.slots.map((sl, i) => {
+              if (sl.tipo === "intervalo") return (
+                <div key={i} style={S.intervaloBox}>⏸️ Intervalo antes das semifinais <span style={{ color: "#64748b", fontWeight: 500 }}>· cerca de um jogo de duração</span></div>
+              );
+              const done = sl.tipo === "jogo" && sl.jogos.every((j) => j.m.finalizada && !faltaPen(j.m));
+              const pendPen = sl.tipo === "jogo" ? sl.jogos.filter((j) => faltaPen(j.m)) : [];
+              const live = sl.tipo === "jogo" && !done && sl.jogos.some((j) => (j.m.eventos || []).length > 0);
+              const next = i === agenda.proximo;
+              return (
+                <div key={i} style={S.slotCard(next, done)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <span style={S.slotNum(next, done)}>{sl.horario}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15 }}>{sl.horario}º horário</div>
+                      <div style={{ fontSize: 12, color: "#94a3b8" }}>{sl.titulo}</div>
+                    </div>
+                    {pendPen.length > 0 ? <span style={S.slotChip("#7f1d1d", "#fca5a5")}>faltam pênaltis</span>
+                      : done ? <span style={S.slotChip("#14532d", "#86efac")}>encerrado</span>
+                      : live ? <span style={S.slotChip("#7f1d1d", "#fca5a5")}>em jogo</span>
+                      : next ? <span style={S.slotChip("#78350f", "#fde68a")}>próximo</span>
+                      : sl.tipo === "previa" ? <span style={S.slotChip("#1e293b", "#94a3b8")}>a definir</span> : null}
+                  </div>
+                  {sl.tipo === "jogo" && (sorteando === sl.key
+                    ? <div style={S.sorteioBox}>🎲 Sorteando os campos…</div>
+                    : !sl.sorteado
+                      ? (edit
+                        ? (sl.pronto
+                          ? <button style={S.sorteioBtn} onClick={() => sortearCampos(sl.key, sl.jogos.map((j) => j.m.id))}>🎲 Sortear campos do {sl.horario}º horário</button>
+                          : <div style={S.sorteioHint}>O sorteio libera quando os times deste horário estiverem definidos.</div>)
+                        : <div style={S.sorteioHint}>Campos ainda não sorteados.</div>)
+                      : (edit && !sl.iniciado && <button style={S.sorteioLink} onClick={() => sortearCampos(sl.key, sl.jogos.map((j) => j.m.id))}>🎲 Sortear de novo</button>))}
+                  {avisoSorteio && avisoSorteio.key === sl.key && <div style={{ fontSize: 12, color: "#fca5a5", margin: "0 2px 8px" }}>{avisoSorteio.msg}</div>}
+                  {pendPen.length > 0 && (
+                    <div style={S.alertaPen}>⚠️ {pendPen.map((j) => { const t = teamsOf(j.m) || {}; return nomeDoTime(t.A) + " x " + nomeDoTime(t.B); }).join(" e ")} terminou empatado. Toque no jogo e informe os pênaltis para definir quem avança.</div>
+                  )}
+                  {sl.tipo === "previa" ? sl.linhas.map((txt, k) => (
+                    <div key={k}>
+                      <div style={S.campoLabel(k + 1)}>{k + 1}º campo</div>
+                      <div style={{ ...S.matchCard, opacity: 0.6 }}><div style={S.matchTeams}>{txt}</div></div>
+                    </div>
+                  )) : sl.jogos.map((j) => {
+                    const { A, B } = teamsOf(j.m) || {};
+                    return (
+                      <div key={j.m.id}>
+                        <div style={S.campoLabel(j.campo)}>{j.campo ? j.campo + "º campo" : "Campo a sortear"}{j.m.ko && j.m.fase && j.m.fase !== "Semifinal" ? " · " + j.m.fase : ""}</div>
+                        <MatchLine m={j.m} a={A} b={B} nome={nomeDoTime} gol={golsNo}
+                          onOpen={A && B ? () => setAtiva(j.m.id) : null} pen={j.m.ko ? { a: j.m.penA, b: j.m.penB } : null} semPen={faltaPen(j.m)} />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </>)}
+        </div>
+      )}
+
       {tela === "grupos" && (
         <div style={S.body}>
           {grupos.length === 0 ? (
@@ -1218,30 +1353,11 @@ function CopaFutebol() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ marginTop: 8 }}>
-                    {(() => {
-                      const jogos = matches.filter((m) => !m.ko && m.grupoId === g.id);
-                      const nums = [...new Set(jogos.map((m) => m.rodada || 1))].sort((a, b) => a - b);
-                      return nums.map((rn) => {
-                        const doRound = jogos.filter((m) => (m.rodada || 1) === rn);
-                        const fim = doRound.every((m) => m.finalizada);
-                        return (
-                          <div key={rn} style={{ marginBottom: 12 }}>
-                            <div style={S.roundLabel}>
-                              Rodada {rn}
-                              {fim && <span style={S.roundDone}>concluída</span>}
-                            </div>
-                            {barraSorteio("R" + rn, matches.filter((x) => !x.ko && (x.rodada || 1) === rn))}
-                            {porCampo(doRound).map((m) => (
-                              <MatchLine key={m.id} m={m} a={m.timeA} b={m.timeB} nome={nomeDoTime} gol={golsNo} onOpen={() => setAtiva(m.id)} campo={campoDe[m.id]} />
-                            ))}
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
                 </div>
               ))}
+              <button style={{ ...S.ghostBtn, width: "100%", marginBottom: 14 }} onClick={() => setTela("agenda")}>
+                <Clock size={16} /> Ver a ordem dos jogos
+              </button>
               {grupos.length === 1 && standings[grupos[0].id]?.length > 0 && todosGruposFim && (
                 <div style={S.champBanner}><Crown size={20} /> Campeão da liga: <b>{nomeDoTime(standings[grupos[0].id][0].id)}</b></div>
               )}
@@ -1269,11 +1385,10 @@ function CopaFutebol() {
                 return (
                   <div key={ri} style={{ marginBottom: 20 }}>
                     <div style={S.groupTitle}>{ms[0].fase}</div>
-                    {barraSorteio("K" + ri, ms)}
                     {porCampo(ms).map((m) => {
                       const { A, B } = teamsOf(m);
                       return <MatchLine key={m.id} m={m} a={A} b={B} nome={nomeDoTime} gol={golsNo}
-                        onOpen={A && B ? () => setAtiva(m.id) : null} pen={{ a: m.penA, b: m.penB }} campo={campoDe[m.id]} />;
+                        onOpen={A && B ? () => setAtiva(m.id) : null} pen={{ a: m.penA, b: m.penB }} campo={campoDe[m.id]} semPen={faltaPen(m)} />;
                     })}
                   </div>
                 );
@@ -1520,6 +1635,7 @@ function CopaFutebol() {
       {/* -------- NAV -------- */}
       <div style={S.nav}>
         <NavBtn on={tela === "times"} click={() => setTela("times")} icon={<Users size={20} />} label="Times" />
+        <NavBtn on={tela === "agenda"} click={() => setTela("agenda")} icon={<Clock size={20} />} label="Jogos" />
         <NavBtn on={tela === "grupos"} click={() => setTela("grupos")} icon={<ListOrdered size={20} />} label="Grupos" />
         <NavBtn on={tela === "mata"} click={() => setTela("mata")} icon={<GitMerge size={20} />} label="Mata-mata" />
         <NavBtn on={tela === "stats"} click={() => setTela("stats")} icon={<Target size={20} />} label="Stats" />
@@ -1530,7 +1646,7 @@ function CopaFutebol() {
 }
 
 // ============ COMPONENTES ============
-function MatchLine({ m, a, b, nome, gol, onOpen, pen, campo }) {
+function MatchLine({ m, a, b, nome, gol, onOpen, pen, campo, semPen }) {
   const gA = a ? gol(m, a) : 0, gB = b ? gol(m, b) : 0;
   return (
     <div style={{ ...S.matchCard, opacity: onOpen ? 1 : 0.7, cursor: onOpen ? "pointer" : "default" }} onClick={onOpen || undefined}>
@@ -1539,8 +1655,10 @@ function MatchLine({ m, a, b, nome, gol, onOpen, pen, campo }) {
         <div style={S.matchScore}>
           {gA} – {gB}
           {pen && pen.a != null && pen.b != null && <span style={{ color: "#a78bfa" }}> (pên {pen.a}-{pen.b})</span>}
-          {m.finalizada && <span style={S.miniTag}>encerrada</span>}
-          {campo && <span style={S.campoTag(campo.campo)}>{campo.campo}º campo{campo.total > 1 ? " · " + campo.horario + "º horário" : ""}</span>}
+          {m.finalizada && (semPen
+            ? <span style={{ ...S.miniTag, background: "#7f1d1d", color: "#fca5a5" }}>faltam os pênaltis</span>
+            : <span style={S.miniTag}>encerrada</span>)}
+          {campo && <span style={S.campoTag(campo.campo)}>{campo.horario}º horário{campo.campo ? " · " + campo.campo + "º campo" : ""}</span>}
         </div>
       </div>
       {onOpen && <Play size={20} color="#22c55e" />}
@@ -1671,8 +1789,16 @@ const S = {
   matchCard: { display: "flex", alignItems: "center", gap: 8, background: "#1e293b", borderRadius: 10, border: "1px solid #334155", padding: "10px 12px", marginBottom: 8, minWidth: 0 },
   matchTeams: { fontWeight: 600, fontSize: 13, overflowWrap: "anywhere", lineHeight: 1.35 },
   matchScore: { fontSize: 12, color: "#94a3b8", marginTop: 2, display: "flex", alignItems: "center", gap: 6 },
+  slotCard: (next, done) => ({ background: "#111c33", border: "1px solid " + (next ? "#f59e0b" : "#334155"), borderRadius: 12, padding: 12, marginBottom: 12, opacity: done ? 0.75 : 1,
+    boxShadow: next ? "0 0 0 1px #f59e0b55" : "none" }),
+  slotNum: (next, done) => ({ width: 34, height: 34, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, flex: "none",
+    background: done ? "#14532d" : next ? "#f59e0b" : "#1e293b", color: done ? "#86efac" : next ? "#1c1917" : "#cbd5e1" }),
+  slotChip: (bg, fg) => ({ background: bg, color: fg, fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, flex: "none" }),
+  campoLabel: (c) => ({ fontSize: 10, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", margin: "6px 2px 4px", color: c === 1 ? "#fbbf24" : c === 2 ? "#93c5fd" : "#94a3b8" }),
+  alertaPen: { background: "#450a0a", border: "1px solid #b91c1c", color: "#fecaca", borderRadius: 10, padding: "9px 11px", fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, marginBottom: 8 },
+  intervaloBox: { textAlign: "center", fontSize: 13, fontWeight: 700, color: "#cbd5e1", padding: "10px", margin: "4px 0 16px", border: "1px dashed #475569", borderRadius: 10 },
   campoTag: (c) => ({ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 10, marginLeft: 6, whiteSpace: "nowrap",
-    background: c === 1 ? "#78350f" : "#1e3a8a", color: c === 1 ? "#fde68a" : "#bfdbfe" }),
+    background: c === 1 ? "#78350f" : c === 2 ? "#1e3a8a" : "#334155", color: c === 1 ? "#fde68a" : c === 2 ? "#bfdbfe" : "#cbd5e1" }),
   sorteioBox: { background: "#422006", border: "1px solid #a16207", color: "#fde68a", borderRadius: 10, padding: "12px", textAlign: "center", fontWeight: 700, fontSize: 13, marginBottom: 8 },
   sorteioBtn: { width: "100%", background: "#a16207", border: "none", borderRadius: 8, color: "#fff", padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 8 },
   sorteioLink: { background: "none", border: "none", color: "#fbbf24", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "0 2px 6px" },
